@@ -1,0 +1,1011 @@
+---
+editor_options:
+  chunk_output_type: console
+output:
+  pdf_document: default
+  html_document: default
+---
+ 
+# starting files: gene counts . (UMI have been treated)
+
+---
+title: "R script for the analyzing ghita's data with only Irf1_FF and Ikbkb_FF with resolution 1.3"
+author: "Ammar Sabir Cheema"
+date: "03/04/2020"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+# loading libraries:
+```{r load libraries}
+library(Seurat)
+library(dplyr)
+library(devtools)
+library(ggrepel)
+library(uwot)
+library(scales)
+library(pheatmap)
+```
+
+
+# Reading and processing input files for only floxed condition
+```{r}
+
+metadata <- read.table("metadata5_wo_M1_wo_conta.txt", sep="\t", header=T, row.names=1)
+dim(metadata)
+
+metadata1 <- metadata[which(metadata$Genotype == "Ikbkb_FF" | metadata$Genotype == "Irf1_FF" ),]
+write.table(metadata1, "metadata1_ghita_data_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+dim(metadata1)
+
+y1 <- read.table("y4_gene_expression_wo_M1_wo_conta.txt", sep="\t", header=T, row.names=1)
+y2 <- as.data.frame(t(y1))
+y3 = y2[rownames(y2) %in% paste('X',rownames(metadata1),sep=""), ,drop=F]
+y4 <- as.data.frame(t(y3))
+write.table(y4,"y4_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt",sep="\t", quote=F)
+dim(y4)
+
+
+```
+
+# Reading the processed metadata file
+```{r}
+metadata2 <- read.table("metadata1_ghita_data_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", header=T, row.names=1)
+
+```
+
+# Making the Seurat object after removing the cells which are not Irf1_FF and Ikbkb_FF
+
+```{r}
+y_seurat <- CreateSeuratObject(y4, min.cells = 5, min.features = 500, project = "Ghita_data_single_cell_removed_Irf1_FF_Ikbkb_FF")
+
+dim(y_seurat)
+
+```
+
+
+# Performing Some Quality Checks (QC)
+```{r}
+VlnPlot(object = y_seurat, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat@meta.data$nCount_RNA)
+hist(y_seurat@meta.data$nFeature_RNA)
+```
+
+# Subsetting the metadata object according to the newly generated seurat object
+```{r}
+metadata2 = metadata1[paste("X",rownames(metadata1),sep = "") %in%  colnames(y_seurat), , drop=F]
+write.table(metadata2, "metadata2_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+dim(metadata2)
+```
+
+# Performing some quality checks using the metadata information
+```{r}
+df_counts <- as.data.frame(y_seurat@meta.data$nCount_RNA)
+df_counts$phenotype <- metadata2$Genotype
+df_counts$plate <- metadata2$Plate
+df_counts$experiment <- metadata2$experiment
+df_counts$mouse_age <- metadata2$mouse_age
+df_counts$id <- rownames(metadata2) # these are cells (id)
+
+
+# histogram number of reads, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata2$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to genotype
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata2$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata2$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata2$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata2$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to phenotype
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata2$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata2$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata2$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+```
+
+## Normalization the data set
+```{r Normalization in natural log y_seurat}
+norm.data <- NormalizeData(object = y_seurat, normalization.method = "LogNormalize", scale.factor = 1e6)
+write.table(norm.data@assays$RNA@data, "log_norm_filtered_data__only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+```
+
+# Identification of highly variable features (feature selection)
+# Here we identify 1000 most variable features and plot 40 of them on the plot shown below
+# Detect features that are variable on a feature plot
+```{r}
+norm.data <- FindVariableFeatures(object=norm.data, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+
+# Identify the 40 most highly variable genes
+top40 <- head(VariableFeatures(norm.data), 40)
+
+# plot variable features with and without labels
+# We plot the variable features in the same way as we find the Variable features in the above method
+plot1 <- VariableFeaturePlot(norm.data)
+
+# In plot2 we label the plot1 with top40 variable genes we have detected above
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+#CombinePlots(plots = list(plot1, plot2))
+plot2
+```
+
+
+
+# Scaling the dataset
+```{r}
+all.genes <- rownames(norm.data)
+norm.data <- ScaleData(norm.data, features = all.genes)
+```
+
+
+
+## Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data <- RunPCA(norm.data, npcs = 30, features = VariableFeatures(object = norm.data))
+norm.data <- RunICA(norm.data, nics = 30, features = VariableFeatures(object = norm.data))
+```
+
+# Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+
+pca_coordinates <- norm.data@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+# Heatmap:
+```{r}
+DimHeatmap(norm.data, dims = 1, cells = 113, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data, dims = 2, cells = 113, balanced = TRUE)
+
+DimHeatmap(norm.data, dims = 1:9, cells = 113, balanced = TRUE)
+```
+
+# Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data))
+head(Cells(norm.data))
+head(rownames(x = norm.data))
+ncol(x = norm.data)
+nrow(x = norm.data)
+```
+
+# Determine the ‘dimensionality’ of the dataset
+# From the plot shown below it is clear that first four principle components are responsible for most of the variability
+```{r}
+norm.data <- JackStraw(norm.data, num.replicate = 100)
+norm.data <- ScoreJackStraw(norm.data, dims = 1:20)
+
+JackStrawPlot(norm.data, dims = 1:15)
+
+ElbowPlot(norm.data)
+```
+
+# Cluster the cells using only first four principle components
+```{r}
+norm.data <- FindNeighbors(norm.data, reduction = "pca", dims = 1:4, k.param=20, compute.SNN=TRUE, force.recalc=TRUE)
+
+norm.data <- FindClusters(norm.data, resolution = 1.3, algorithm=1, random.seed=0)
+
+#Look at cluster IDs of the first 5 cells
+head(Idents(norm.data), 5)
+clusters_res1.3 <- norm.data$RNA_snn_res.1.3
+write.table(clusters_res1.3, "clusters_res1.3_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+```
+
+
+# Running UMAP for clustering 
+```{r}
+
+norm.data <- RunUMAP(norm.data, umap.method="uwot", dims = 1:4, seed.use=10,  n.components=2, n.neighbors = 7, spread=1, min.dist=2.5)
+
+DimPlot(norm.data, reduction = "umap", pt.size=2)
+UMAP_coord <- norm.data@reductions$umap@cell.embeddings
+write.table(UMAP_coord, "UMAP_coordinates_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+```
+
+
+## tSNE for the clustering :
+```{r}
+norm.data <- RunTSNE(object = norm.data, reduction="pca", tsne.method="Rtsne", features = "var.features", dims= 1:4, seed.use=11, dim.embed=2)
+DimPlot(object = norm.data, reduction = "tsne", pt.size = 2, label.size = 4)
+tSNE_coord <- norm.data@reductions$tsne@cell.embeddings
+write.table(tSNE_coord, "tSNE_coordinates_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F)
+```
+
+# Creating dataframe for making UMAP and Tsne plots using ggplot
+```{r}
+tSNE_coordinates <- read.table("tSNE_coordinates_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", header=T, row=1)
+UMAP_coordinates <- read.table("UMAP_coordinates_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", header=T, row=1)
+
+
+
+clusters <- read.table("clusters_res1.3_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", header=T, row=1)
+colnames(clusters) <- "clusters_res1.3"
+clusters$clusters_res1.3 <- sub("^", "C", clusters$clusters_res1.3)
+
+
+
+tSNE_UMAP_coordinates_ok <- tSNE_coordinates
+tSNE_UMAP_coordinates_ok$UMAP_1 <- UMAP_coordinates$UMAP_1
+tSNE_UMAP_coordinates_ok$UMAP_2 <- UMAP_coordinates$UMAP_2
+tSNE_UMAP_coordinates_ok$Genotype <- metadata2$Genotype
+tSNE_UMAP_coordinates_ok$plate <- metadata2$Plate
+tSNE_UMAP_coordinates_ok$experiment <- metadata2$experiment
+tSNE_UMAP_coordinates_ok$mouse_age <- metadata2$mouse_age
+tSNE_UMAP_coordinates_ok$clusters_res1.3 <- clusters$clusters_res1.3
+tSNE_UMAP_coordinates_ok$arcsinh_CD64 <- metadata2$arcsinh_CD64
+tSNE_UMAP_coordinates_ok$arcsinh_LIN <- metadata2$arcsinh_LIN
+tSNE_UMAP_coordinates_ok$arcsinh_XCR1 <- metadata2$arcsinh_XCR1
+tSNE_UMAP_coordinates_ok$arcsinh_CD11b <- metadata2$arcsinh_CD11b
+tSNE_UMAP_coordinates_ok$arcsinh_CD11c <- metadata2$arcsinh_CD11c
+tSNE_UMAP_coordinates_ok$arcsinh_LIVE <- metadata2$arcsinh_LIVE
+tSNE_UMAP_coordinates_ok$arcsinh_CD45 <- metadata2$arcsinh_CD45
+tSNE_UMAP_coordinates_ok$arcsinh_B_TIL <- metadata2$arcsinh_B_TIL
+tSNE_UMAP_coordinates_ok$arcsinh_MHCII <- metadata2$arcsinh_MHCII
+tSNE_UMAP_coordinates_ok$arcsinh_SSC <- metadata2$arcsinh_SSC
+tSNE_UMAP_coordinates_ok$arcsinh_FSC <- metadata2$arcsinh_FSC
+tSNE_UMAP_coordinates_ok$nFeature_RNA <- metadata2$nFeature_RNA
+
+
+head(tSNE_UMAP_coordinates_ok)
+write.table(tSNE_UMAP_coordinates_ok, "tSNE_UMAP_coordinates_ok_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", quote=F, col.names=NA, row.names=TRUE)
+
+
+
+ tSNE_UMAP_coordinates_ok <- read.table("tSNE_UMAP_coordinates_ok_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep="\t", header=T, row=1)
+
+ levels(tSNE_UMAP_coordinates_ok$Genotype)
+ levels(tSNE_UMAP_coordinates_ok$plate)
+ levels(tSNE_UMAP_coordinates_ok$clusters_res1.3)
+ levels(tSNE_UMAP_coordinates_ok$experiment)
+
+ color_ordered=c("green", "darkorchid2", "darkorange", "cornflowerblue", "black", "red", "cadetblue1", "burlywood4", "deepskyblue", "gray", "coral4", "green4", "hotpink3", "darkseagreen", "darkslateblue", "lightblue", "lightgreen", "orange2")
+
+```
+
+
+# figure UMAP avec les shapes et colors:
+## Some unneccessary plots are commented
+```{r}
+
+# UMAP clustering according to Genotype
+ ggplot(tSNE_UMAP_coordinates_ok, aes(x=UMAP_1, y=UMAP_2, shape=factor(Genotype))) + geom_point(aes(colour=clusters_res1.3), size=3) + scale_colour_manual(values=hue_pal()(7)) + scale_shape_manual(values= c(17, 1, 15, 0, 7)) + theme(panel.background = element_rect(fill="white"))
+
+# UMAP clustering according to experiment
+  ggplot(tSNE_UMAP_coordinates_ok, aes(x=UMAP_1, y=UMAP_2, shape=factor(experiment))) + geom_point(aes(colour=clusters_res1.3), size=2) + scale_colour_manual(values=color_ordered) + scale_shape_manual(values= c(17, 1, 15, 19, 7))
+
+
+
+
+
+
+
+
+
+#  mid<-median(tSNE_UMAP_coordinates_ok$arcsinh_SSC) 
+# ggplot(tSNE_UMAP_coordinates_ok, aes(x=UMAP_1, y=UMAP_2, shape=factor(experiment), color=arcsinh_SSC)) + geom_point() + scale_shape_manual(values= c(0, 17, 15, 19)) + scale_color_gradient2(midpoint=mid,low="cornflowerblue",mid="black",high="darkorange",space = "Lab") 
+
+
+
+mid<-median(tSNE_UMAP_coordinates_ok$nFeature_RNA)
+ggplot(tSNE_UMAP_coordinates_ok, aes(x=UMAP_1, y=UMAP_2, shape=factor(experiment), color=nFeature_RNA)) + geom_point() + scale_shape_manual(values= c(0, 17, 15, 19)) + scale_color_gradient2(midpoint=mid,low="cornflowerblue",mid="black",high="darkorange",space = "Lab")
+
+```
+        
+
+# Highlighting the five cells for the global fourth cluster in the floxed umap
+```{r}
+ggplot(tSNE_UMAP_coordinates_ok, aes(x=UMAP_1, y=UMAP_2, shape=factor(clusters_res1.3))) + geom_point(aes(colour=experiment), size=2) + scale_colour_manual(values=color_ordered) + scale_shape_manual(values= c(17, 1, 15, 19, 7,2,18)) + geom_point(data=tSNE_UMAP_coordinates_ok[c("X191216_m_XCR1_plate3_BC23","X191216_m_XCR1_plate10_BC67","X191216_m_XCR1_plate14_BC14","X191216_m_XCR1_plate12_BC6","X191216_m_XCR1_plate13_BC54"), ], aes(x=UMAP_1, y=UMAP_2),size=5)
+
+```
+
+# Dimensional reduction plot, with cells colored by a quantitative feature
+# Feature Plots
+# Genes shown in heatmap (Merad paper: fig 1b)
+# Not found Sirpa
+```{r}
+# These genes are not present in our data ("Aldh1a2","Il4i1", "Cd209a","H2-DMb2","Itgam")
+gene_list <- c("Ccr7", "Fscn1", "Cd274", "Pdcd1lg2", "Cd200", "Fas", "Il4ra", "Socs2", "Relb", "Xcr1", "Clec9a", "Cadm1", "Naaa","Fscn1","Relb")
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap",min.cutoff = 0,max.cutoff = 7.5,pt.size=2))
+}
+```
+
+
+# Genes for Maturation (Merad paper: fig 1c)
+```{r}
+gene_list <- c("Cd40", "Cd80", "Cd86", "Cd83")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap" , min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+```
+
+
+
+# Genes for Migration (Merad paper: fig 1c)
+```{r}
+gene_list <- c( "Myo1g", "Cxcl16", "Adam8", "Icam1", "Marcks", "Marcksl1")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+```
+
+
+# Genes which are TLR and adapters (Merad paper: fig 1c)
+```{r}
+# These genes are not present in our data ("Tlr8","Tlr7", "Tlr6", "Tlr5","Tlr4","Tlr11","Tlr2")
+gene_list <- c("Myd88", "Ticam1" , "Tlr3")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+
+
+```
+
+
+
+
+## Few genes are not present in this list inc. "Ms4a4a","Cd2","Clec12","Lifr","Cd3d","C1qc","Lair1","Rufy3","Sema6d"
+```{r Expression of selected genes of interest 4}
+
+
+gene_list <- c("C1qa","C1qb","Fcer1g","Irf1","Ikbkb","Cd8a","Batf3","Gpr141b","Tcf4","Ccl3","Ccl5","Tnf","Il12b","Vim","Zbtb46","Ms4a6c","Ms4a6b","Lgals3","Ywhah","Anxa5","Spi1","Cd300a","Rin3","Fyb","Khk","Slamf9","Fyb","Mir155hg","Mx1","Oasl1","Bex6","Bcl2l1","Nr4a1","Nr4a3","Cxcl10","Cxcl9","Ccl22","Psmb1",   "Tapbp",   "Rab14",   "Uggt1",   "Snap23",   "Slamf7" ,"Mreg"   )
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size=2))
+}
+
+```
+
+
+# Make violin plots
+```{r}
+
+gene_list_vln_plt <- c("Irf1","Ikbkb","Xcr1","Clec9a","Cadm1","Cd80","Cd86","Cd8a","Cd274","Gpr141b","Batf3","Ccl5","Cxcl10","Cxcl9", "Ccl22","Il12b","Mreg")
+
+
+for (i in 1:length(gene_list_vln_plt)) {
+  print(VlnPlot(object = norm.data, features = gene_list_vln_plt[i],y.max = 10))
+}
+
+
+```
+
+
+
+
+
+# Saving the R object from this analysis
+```{r}
+saveRDS(norm.data, file = "norm_data_only_Irf1_FF_only_Ikbkb_FF_res_1.3.rds")
+```
+
+
+
+
+# extract markers for the clusters, and show some of them:
+```{r extracting markers for the clusters norm.data2}
+
+ for(i in 0:3) {
+  assign(paste("cluster", i,".markers", sep = ""), FindMarkers(norm.data, ident.1 = i, test.use = "bimod", only.pos = TRUE))
+    print(paste("cluster", i,".markers", sep = ""))
+    print(head(get(paste("cluster", i,".markers", sep = "")),n=20))
+    write.table(get(paste("cluster", i,".markers", sep = "")),paste("cluster", i,".markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", sep = ""),row.names = TRUE)
+
+      }
+```
+
+# enrichR analysis for clusters markers
+
+```{r}
+library(enrichR)
+
+## Welcome to enrichR
+## Checking connection ... Connection is Live!
+
+dbs <- listEnrichrDbs()
+dbs <- c("GO_Biological_Process_2018", "KEGG_2019_Mouse", "Reactome_2016", "TRANSFAC_and_JASPAR_PWMs", "Transcription_Factor_PPIs")
+
+# Filtering clusters markers (p_val_adj < 0.05)
+
+ 
+markers_C0 <-  read.table("cluster0.markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt",sep=" ")
+dim(markers_C0)
+markers_C0 <- rownames(markers_C0[which(markers_C0$p_val_adj < 0.05 ),])
+markers_C0
+length(markers_C0)
+
+enriched_genes_markers_C0 <- enrichr(markers_C0, dbs)
+
+
+head(enriched_genes_markers_C0[["GO_Biological_Process_2018"]],10)
+
+
+head(enriched_genes_markers_C0[["KEGG_2019_Mouse"]],10)
+
+
+head(enriched_genes_markers_C0[["Reactome_2016"]],10)
+
+
+head(enriched_genes_markers_C0[["TRANSFAC_and_JASPAR_PWMs"]],10)
+
+
+head(enriched_genes_markers_C0[["Transcription_Factor_PPIs"]],10)
+
+
+# Writing files
+
+write.table(enriched_genes_markers_C0[["GO_Biological_Process_2018"]], file="enriched_genes_markers_C0_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_BP.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C0[["KEGG_2019_Mouse"]], file="enriched_genes_markers_C0_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_KEGG.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C0[["Reactome_2016"]], file="enriched_genes_markers_C0_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_Reactome.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C0[["TRANSFAC_and_JASPAR_PWMs"]], file="enriched_genes_markers_C0_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TFBS.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C0[["Transcription_Factor_PPIs"]], file="enriched_genes_markers_C0_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TF_PPI.txt", sep="\t", row.names=F, quote=F) 
+
+markers_C1 <-  read.table("cluster1.markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt",sep=" ")
+dim(markers_C1)
+markers_C1 <- rownames(markers_C1[which(markers_C1$p_val_adj < 0.05 ),])
+markers_C1
+length(markers_C1)
+
+
+enriched_genes_markers_C1 <- enrichr(markers_C1, dbs)
+
+
+head(enriched_genes_markers_C1[["GO_Biological_Process_2018"]],10)
+
+
+head(enriched_genes_markers_C1[["KEGG_2019_Mouse"]],10)
+
+
+head(enriched_genes_markers_C1[["Reactome_2016"]],10)
+
+
+head(enriched_genes_markers_C1[["TRANSFAC_and_JASPAR_PWMs"]],10)
+
+
+head(enriched_genes_markers_C1[["Transcription_Factor_PPIs"]],10)
+
+
+# Writing files
+
+write.table(enriched_genes_markers_C1[["GO_Biological_Process_2018"]], file="enriched_genes_markers_C1_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_BP.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C1[["KEGG_2019_Mouse"]], file="enriched_genes_markers_C1_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_KEGG.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C1[["Reactome_2016"]], file="enriched_genes_markers_C1_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_Reactome.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C1[["TRANSFAC_and_JASPAR_PWMs"]], file="enriched_genes_markers_C1_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TFBS.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C1[["Transcription_Factor_PPIs"]], file="enriched_genes_markers_C1_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TF_PPI.txt", sep="\t", row.names=F, quote=F)
+
+markers_C2 <-  read.table("cluster2.markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt",sep=" ")
+dim(markers_C2)
+markers_C2 <- rownames(markers_C2[which(markers_C2$p_val_adj < 0.05 ),])
+markers_C2 
+length(markers_C2)
+enriched_genes_markers_C2 <- enrichr(markers_C2, dbs)
+
+
+head(enriched_genes_markers_C2[["GO_Biological_Process_2018"]],10)
+
+
+head(enriched_genes_markers_C2[["KEGG_2019_Mouse"]],10)
+
+
+head(enriched_genes_markers_C2[["Reactome_2016"]],10)
+
+
+head(enriched_genes_markers_C2[["TRANSFAC_and_JASPAR_PWMs"]],10)
+
+
+head(enriched_genes_markers_C2[["Transcription_Factor_PPIs"]],10)
+
+
+# Writing files
+
+write.table(enriched_genes_markers_C2[["GO_Biological_Process_2018"]], file="enriched_genes_markers_C2_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_BP.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C2[["KEGG_2019_Mouse"]], file="enriched_genes_markers_C2_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_KEGG.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C2[["Reactome_2016"]], file="enriched_genes_markers_C2_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_Reactome.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C2[["TRANSFAC_and_JASPAR_PWMs"]], file="enriched_genes_markers_C2_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TFBS.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C2[["Transcription_Factor_PPIs"]], file="enriched_genes_markers_C2_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TF_PPI.txt", sep="\t", row.names=F, quote=F)
+
+
+
+
+markers_C3 <-  read.table("cluster3.markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt",sep=" ")
+dim(markers_C3)
+markers_C3 <- rownames(markers_C3[which(markers_C3$p_val_adj < 0.05 ),])
+markers_C3
+length(markers_C3)
+enriched_genes_markers_C3 <- enrichr(markers_C3, dbs)
+
+
+head(enriched_genes_markers_C3[["GO_Biological_Process_2018"]],10)
+
+
+head(enriched_genes_markers_C3[["KEGG_2019_Mouse"]],10)
+
+
+head(enriched_genes_markers_C3[["Reactome_2016"]],10)
+
+
+head(enriched_genes_markers_C3[["TRANSFAC_and_JASPAR_PWMs"]],10)
+
+
+head(enriched_genes_markers_C3[["Transcription_Factor_PPIs"]],10)
+
+
+# Writing files
+
+write.table(enriched_genes_markers_C3[["GO_Biological_Process_2018"]], file="enriched_genes_markers_C3_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_BP.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C3[["KEGG_2019_Mouse"]], file="enriched_genes_markers_C3_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_KEGG.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C3[["Reactome_2016"]], file="enriched_genes_markers_C3_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_Reactome.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C3[["TRANSFAC_and_JASPAR_PWMs"]], file="enriched_genes_markers_C3_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TFBS.txt", sep="\t", row.names=F, quote=F)
+write.table(enriched_genes_markers_C3[["Transcription_Factor_PPIs"]], file="enriched_genes_markers_C3_res_1.3_only_Irf_FF_only_Ikbkb_FF_markers_TF_PPI.txt", sep="\t", row.names=F, quote=F)
+
+```
+
+
+
+# Setting clusters for performing differential gene expression testing
+```{r}
+metadata2$cluster <- clusters$clusters_res1.3
+  
+Idents(norm.data) <- metadata2$cluster
+```
+
+
+# Differential gene expression C0 VS C1 with p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C0_VS_C1 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C1",min.pct = 0.5,test.use = "bimod")
+DGE_C0_VS_C1 <- subset(DGE_C0_VS_C1,p_val_adj <= 0.25 )
+
+write.table(DGE_C0_VS_C1,"DGE_C0_VS_C1_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C1,n=20))
+
+DGE_C0_VS_C1 <- subset(DGE_C0_VS_C1,abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C0_VS_C1,"DGE_C0_VS_C1_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C1,n=20))
+
+```
+
+
+# Differential gene expression C0 VS C2 p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C0_VS_C2 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C2",min.pct = 0.5,test.use = "bimod")
+DGE_C0_VS_C2 <- subset(DGE_C0_VS_C2,p_val_adj <= 0.25 )
+
+write.table(DGE_C0_VS_C2,"DGE_C0_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C2,n=20))
+
+
+DGE_C0_VS_C2 <- subset(DGE_C0_VS_C2,abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C0_VS_C2,"DGE_C0_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C2,n=20))
+
+```
+
+
+# Differential gene expression C0 VS C3 p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C0_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C3",min.pct = 0.5,test.use = "bimod")
+DGE_C0_VS_C3 <- subset(DGE_C0_VS_C3,p_val_adj <= 0.25 )
+
+write.table(DGE_C0_VS_C3,"DGE_C0_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C3,n=20))
+
+DGE_C0_VS_C3 <- subset(DGE_C0_VS_C3,abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C0_VS_C3,"DGE_C0_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C3,n=20))
+
+```
+
+
+# Differential gene expression C1 VS C2 p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C1_VS_C2 <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C2",min.pct = 0.5,test.use = "bimod")
+DGE_C1_VS_C2 <- subset(DGE_C1_VS_C2,p_val_adj <= 0.25 )
+
+write.table(DGE_C1_VS_C2,"DGE_C1_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C2,n=20))
+
+DGE_C1_VS_C2 <- subset(DGE_C1_VS_C2,abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C1_VS_C2,"DGE_C1_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C2,n=20))
+
+```
+
+
+# Differential gene expression C1 VS C3 p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C1_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C3",min.pct = 0.5,test.use = "bimod")
+DGE_C1_VS_C3 <- subset(DGE_C1_VS_C3, p_val_adj <= 0.25 )
+
+write.table(DGE_C1_VS_C3,"DGE_C1_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C3,n=20))
+
+DGE_C1_VS_C3 <- subset(DGE_C1_VS_C3, abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C1_VS_C3,"DGE_C1_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C3, n=20))
+
+```
+
+# Differential gene expression C2 VS C3 p_val_adj <= 0.25 and (p_val_adj <=0.25 AND  abs(logFC) >=1)
+```{r}
+DGE_C2_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C2",ident.2 =  "C3",min.pct = 0.5,test.use = "bimod")
+DGE_C2_VS_C3 <- subset(DGE_C2_VS_C3,p_val_adj <= 0.25 )
+
+write.table(DGE_C2_VS_C3,"DGE_C2_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25.txt",row.names=TRUE) 
+print(head(DGE_C2_VS_C3,n=20))
+
+DGE_C2_VS_C3 <- subset(DGE_C2_VS_C3,abs(avg_logFC) >= 1 & p_val_adj <= 0.25)
+write.table(DGE_C2_VS_C3,"DGE_C2_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.25_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C2_VS_C3,n=20))
+
+```
+
+
+
+# Differential gene expression C0 VS C1 with 
+```{r}
+
+DGE_C0_VS_C1 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C1",test.use = "bimod")
+write.table(DGE_C0_VS_C1,"DGE_C0_VS_C1_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C1,n=20))
+
+```
+
+
+# Differential gene expression C0 VS C2 
+```{r}
+
+DGE_C0_VS_C2 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C2",test.use = "bimod")
+write.table(DGE_C0_VS_C2,"DGE_C0_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C2,n=20))
+
+
+
+
+```
+
+
+# Differential gene expression C0 VS C3 
+```{r}
+DGE_C0_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C3",test.use = "bimod")
+write.table(DGE_C0_VS_C3,"DGE_C0_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C3,n=20))
+
+
+
+```
+
+
+# Differential gene expression C1 VS C2 
+```{r}
+DGE_C1_VS_C2 <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C2",test.use = "bimod")
+write.table(DGE_C1_VS_C2,"DGE_C1_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C2,n=20))
+
+
+
+```
+
+
+# Differential gene expression C1 VS C3 
+```{r}
+
+DGE_C1_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C3",test.use = "bimod")
+write.table(DGE_C1_VS_C3,"DGE_C1_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C3,n=20))
+
+
+
+```
+
+# Differential gene expression C2 VS C3 
+```{r}
+
+DGE_C2_VS_C3 <-FindMarkers(norm.data, ident.1 =  "C2",ident.2 =  "C3",test.use = "bimod")
+write.table(DGE_C2_VS_C3,"DGE_C2_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3.txt",row.names=TRUE) 
+print(head(DGE_C2_VS_C3,n=20))
+
+
+
+```
+
+# Differential gene expression C0 VS C1 with p_val_adj <= 0.05 and abs(logFC) >=0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C0_VS_C1_UP <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C1",test.use = "bimod")
+DGE_C0_VS_C1_UP <- subset(DGE_C0_VS_C1_UP,avg_logFC >= 0.693 & p_val_adj <= 0.05)
+write.table(DGE_C0_VS_C1_UP,"DGE_C0_VS_C1_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_pos_0.693.txt",row.names=TRUE) 
+DGE_C0_VS_C1_UP <- rownames(DGE_C0_VS_C1_UP)
+print(head(DGE_C0_VS_C1_UP,n=20))
+
+
+DGE_C0_VS_C1_DN <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C1",test.use = "bimod")
+DGE_C0_VS_C1_DN<- subset(DGE_C0_VS_C1_DN,avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C0_VS_C1_DN,"DGE_C0_VS_C1_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_neg_0.693.txt",row.names=TRUE) 
+DGE_C0_VS_C1_DN <- rownames(DGE_C0_VS_C1_DN)
+print(head(DGE_C0_VS_C1_DN,n=20))
+
+
+
+
+DGE_C0_VS_C1_UP_PLUS_DN <- union(DGE_C0_VS_C1_UP, DGE_C0_VS_C1_DN)
+head(DGE_C0_VS_C1_UP_PLUS_DN)
+```
+
+
+# Differential gene expression C0 VS C2 p_val_adj <= 0.05 and abs(logFC) >=0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C0_VS_C2_UP <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C2",test.use = "bimod")
+DGE_C0_VS_C2_UP <- subset(DGE_C0_VS_C2_UP,avg_logFC >= 0.693, p_val_adj <= 0.05 )
+write.table(DGE_C0_VS_C2_UP,"DGE_C0_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_pos_0.693.txt",row.names=TRUE) 
+print(head(DGE_C0_VS_C2_UP,n=20))
+DGE_C0_VS_C2_UP <- rownames(DGE_C0_VS_C2_UP)
+
+DGE_C0_VS_C2_DN <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C2",test.use = "bimod")
+DGE_C0_VS_C2_DN <- subset(DGE_C0_VS_C2_DN,avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C0_VS_C2_DN,"DGE_C0_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_neg_0.693.txt",row.names=TRUE) 
+DGE_C0_VS_C2_DN <- rownames(DGE_C0_VS_C2_DN)
+print(head(DGE_C0_VS_C2_DN,n=20))
+
+
+
+DGE_C0_VS_C2_UP_PLUS_DN <- union(DGE_C0_VS_C2_UP, DGE_C0_VS_C2_DN)
+head(DGE_C0_VS_C2_UP_PLUS_DN)
+```
+
+
+# Differential gene expression C0 VS C3 p_val_adj <= 0.05 and abs(logFC) >= 0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C0_VS_C3_UP <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C3",test.use = "bimod")
+DGE_C0_VS_C3_UP <- subset(DGE_C0_VS_C3_UP,p_val_adj <= 0.05 ,avg_logFC >= 0.693)
+write.table(DGE_C0_VS_C3_UP,"DGE_C0_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_pos_0.693.txt",row.names=TRUE) 
+DGE_C0_VS_C3_UP <- rownames(DGE_C0_VS_C3_UP)
+print(head(DGE_C0_VS_C3_UP,n=20))
+
+
+
+DGE_C0_VS_C3_DN <-FindMarkers(norm.data, ident.1 =  "C0",ident.2 =  "C3",test.use = "bimod")
+DGE_C0_VS_C3_DN <- subset(DGE_C0_VS_C3_DN,avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C0_VS_C3_DN,"DGE_C0_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_neg_0.693.txt",row.names=TRUE) 
+DGE_C0_VS_C3_DN <- rownames(DGE_C0_VS_C3_DN)
+print(head(DGE_C0_VS_C3_DN,n=20))
+
+
+DGE_C0_VS_C3_UP_PLUS_DN <- union(DGE_C0_VS_C3_UP, DGE_C0_VS_C3_DN)
+head(DGE_C0_VS_C3_UP_PLUS_DN)
+```
+
+
+# Differential gene expression C1 VS C2 p_val_adj <= 0.05 and abs(logFC) >=0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C1_VS_C2_UP <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C2",test.use = "bimod")
+DGE_C1_VS_C2_UP <- subset(DGE_C1_VS_C2_UP,p_val_adj <= 0.05 ,avg_logFC >= 0.693)
+write.table(DGE_C1_VS_C2_UP,"DGE_C1_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05.txt",row.names=TRUE) 
+DGE_C1_VS_C2_UP <- rownames(DGE_C1_VS_C2_UP)
+print(head(DGE_C1_VS_C2_UP,n=20))
+
+DGE_C1_VS_C2_DN <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C2",test.use = "bimod")
+DGE_C1_VS_C2_DN <- subset(DGE_C1_VS_C2_DN,avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C1_VS_C2_DN,"DGE_C1_VS_C2_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_1.txt",row.names=TRUE) 
+DGE_C1_VS_C2_DN <- rownames(DGE_C1_VS_C2_DN)
+print(head(DGE_C1_VS_C2_DN,n=20))
+
+DGE_C1_VS_C2_UP_PLUS_DN <- union(DGE_C1_VS_C2_UP, DGE_C1_VS_C2_DN)
+head(DGE_C1_VS_C2_UP_PLUS_DN)
+```
+
+
+# Differential gene expression C1 VS C3 p_val_adj <= 0.05 and abs(logFC) >=0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C1_VS_C3_UP <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C3",test.use = "bimod")
+DGE_C1_VS_C3_UP <- subset(DGE_C1_VS_C3_UP, p_val_adj <= 0.05 , avg_logFC >= 0.693)
+write.table(DGE_C1_VS_C3_UP,"DGE_C1_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C3_UP,n=20))
+DGE_C1_VS_C3_UP <- rownames(DGE_C1_VS_C3_UP)
+
+DGE_C1_VS_C3_DN <-FindMarkers(norm.data, ident.1 =  "C1",ident.2 =  "C3",test.use = "bimod")
+DGE_C1_VS_C3_DN <- subset(DGE_C1_VS_C3_DN, avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C1_VS_C3_DN,"DGE_C1_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_1.txt",row.names=TRUE) 
+print(head(DGE_C1_VS_C3_DN, n=20))
+DGE_C1_VS_C3_DN <- rownames(DGE_C1_VS_C3_DN)
+
+DGE_C1_VS_C3_UP_PLUS_DN <- union(DGE_C1_VS_C3_UP, DGE_C1_VS_C3_DN)
+head(DGE_C1_VS_C3_UP_PLUS_DN)
+```
+
+# Differential gene expression C2 VS C3 p_val_adj <= 0.05 and abs(logFC) >=0.693 plus abs(logFC) <= -0.693
+```{r}
+DGE_C2_VS_C3_UP <-FindMarkers(norm.data, ident.1 =  "C2",ident.2 =  "C3",test.use = "bimod")
+DGE_C2_VS_C3_UP <- subset(DGE_C2_VS_C3_UP,p_val_adj <= 0.05, avg_logFC >= 0.693 )
+write.table(DGE_C2_VS_C3_UP,"DGE_C2_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_pos_0.693.txt",row.names=TRUE) 
+print(head(DGE_C2_VS_C3_UP,n=20))
+DGE_C2_VS_C3_UP <- rownames(DGE_C2_VS_C3_UP)
+
+DGE_C2_VS_C3_DN <-FindMarkers(norm.data, ident.1 =  "C2",ident.2 =  "C3",test.use = "bimod")
+DGE_C2_VS_C3_DN <- subset(DGE_C2_VS_C3_DN,avg_logFC <= -0.693 & p_val_adj <= 0.05)
+write.table(DGE_C2_VS_C3_DN,"DGE_C2_VS_C3_only_Irf1_FF_Ikbkb_FF_with_res_1.3_with_p_val_adj_0.05_logFC_neg_0.693.txt",row.names=TRUE) 
+print(head(DGE_C2_VS_C3_DN,n=20))
+DGE_C2_VS_C3_DN <- rownames(DGE_C2_VS_C3_DN)
+
+
+DGE_C2_VS_C3_UP_PLUS_DN <- union(DGE_C2_VS_C3_UP, DGE_C2_VS_C3_DN)
+head(DGE_C2_VS_C3_UP_PLUS_DN)
+```
+
+# Calling enrichr on the newly generated gene lists
+```{r}
+
+lists_of_genes <- c("DGE_C0_VS_C1_UP","DGE_C0_VS_C1_DN","DGE_C0_VS_C1_UP_PLUS_DN","DGE_C0_VS_C2_UP","DGE_C0_VS_C2_DN","DGE_C0_VS_C2_UP_PLUS_DN","DGE_C0_VS_C3_UP","DGE_C0_VS_C3_DN","DGE_C0_VS_C3_UP_PLUS_DN","DGE_C1_VS_C2_UP","DGE_C1_VS_C2_DN","DGE_C1_VS_C2_UP_PLUS_DN","DGE_C1_VS_C3_UP","DGE_C1_VS_C3_DN","DGE_C1_VS_C3_UP_PLUS_DN",
+"DGE_C2_VS_C3_UP","DGE_C2_VS_C3_DN","DGE_C2_VS_C3_UP_PLUS_DN")
+
+
+
+for(i in 1:length(lists_of_genes)){
+
+# calling enrichr
+
+print(lists_of_genes[i])  
+assign(paste0("enriched_genes_",lists_of_genes[i],sep=''),
+enrichr(get(lists_of_genes[i]),dbs))
+
+# printing enriched genes
+
+print(paste0("enriched_genes_",lists_of_genes[i],sep=""))  
+  
+cat("\n")  
+print(head(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["GO_Biological_Process_2018"]],10))
+
+print(head(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["KEGG_2019_Mouse"]],10))
+
+print(head(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["Reactome_2016"]],10))
+
+print(head(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["TRANSFAC_and_JASPAR_PWMs"]],10))
+
+print(head(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["Transcription_Factor_PPIs"]],10))
+
+# writing files
+
+write.table(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["GO_Biological_Process_2018"]], file=paste0("enriched_genes_",lists_of_genes[i],"_BP_only_Irf1_only_Ikbkb_FF_res_1.3_p_val_0.05_log_FC_0.693.txt", sep="\t", row.names=F, quote=F))
+
+write.table(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["KEGG_2019_Mouse"]], file=paste0("enriched_genes_",lists_of_genes[i],"_KEGG_only_Irf1_only_Ikbkb_FF_res_1.3_p_val_0.05_log_FC_0.693.txt", sep="\t", row.names=F, quote=F))
+
+write.table(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["Reactome_2016"]], file=paste0("enriched_genes_",lists_of_genes[i],"_Reactome_only_Irf1_only_Ikbkb_FF_res_1.3_p_val_0.05_log_FC_0.693.txt", sep="\t", row.names=F, quote=F))
+
+write.table(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["TRANSFAC_and_JASPAR_PWMs"]], file=paste0("enriched_genes_",lists_of_genes[i],"_TFBS_only_Irf1_only_Ikbkb_FF_res_1.3_p_val_0.05_log_FC_0.693.txt", sep="\t", row.names=F, quote=F))
+
+write.table(get(paste0("enriched_genes_",lists_of_genes[i],sep=""))[["Transcription_Factor_PPIs"]], file=paste0("enriched_genes_",lists_of_genes[i],"_TF_PPI_only_Irf1_only_Ikbkb_FF_res_1.3_p_val_0.05_log_FC_0.693.txt", sep="\t", row.names=F, quote=F))
+  }
+  
+```  
+
+
+```{r}
+
+
+
+
+gene_list_all <- c("ANXA3", "AURKA", "AURKB", "BCL2L14", "BHLHE40", "BIRC2", "BIRC5", "CACNB3", "CCL22", "CCL5", "CCNB1", "CCNB2", "CCND1", "CCR7", "CD200", "CD274", "CD40", "CD80", "CD83", "CDK1", "CDK2", "CDK4", "CDKN2D", "CDKN3", "CFLAR", "CKS1B", "CKS2", "CLIC4", "FAM49A", "FAS", "FSCN1", "GADD45B", "GLIPR2", "GNB4", "GPD2", "GYPC", "HTRA2", "ICAM1", "IFI204", "IFIT2", "IFIT3", "IL12B", "IL15", "IL15RA", "IL21R", "IL2RG", "INSL6", "IRF1", "ISG20", "JAK2", "KIF22", "KLF6", "KPNA2", "KTN1", "LAPTM4B", "LBR", "LGMN", "LITAF", "MAP3K8", "MARCKSL1", "MCM5", "MKI67", "MXD1", "MYC", "NFKB2", "NFKBIA", "NFKBIE", "NOSTRIN", "NUDT17", "PCGF5", "PDE4B", "PFKFB3", "PIK3R1", "PLK1", "POGLUT1", "PPP1R15A", "PSME1", "PSME2", "RASA2", "RELB", "RGS1", "RNF115", "SAMHD1", "SAMSN1", "SCIN", "SCPEP1", "SERPINB1A", "SERPINB6B", "SERPINB9", "SMC4", "SOCS2", "SPINT2", "SPPL2A", "SQSTM1", "STAP2", "STAT1", "STAT3", "STAT4", "STMN1", "SWAP70", "TACC3", "TANK", "TMEM123", "TMEM19", "TMEM39A", "TNFAIP3", "TNFSF9", "TOP2A", "TRAF1", "TRAFD1", "TXNDC17",  "VWA5A", "ZMYND15","USP18","STAT2","MX1","ISG15","IRF7","IFITM3","IFITM2","IFIH1","BST2","GBP2","NCOA7","CD69","Cxcl9","IL18BP")
+
+
+
+gene_list_cell_cycle <- c("STMN1", "CKS1B", "SMC4", "TACC3", "TOP2A", "CDK1", "MCM5", "BIRC5", "AURKB", "LBR", "PLK1", "CKS2", "KIF22", "AURKA", "CDKN3", "MYC", "KPNA2",  "CCNB2", "CDK4", "MKI67", "CCND1",  "CCNB1", "CDKN2D", "CDK2")
+
+gene_list_tnf_via_Nfkb <- c( "ICAM1", "MAP3K8", "CD83","NFKB2", "KLF6",  "TANK", "BIRC2", "RELB", "TNFAIP3", "NFKBIE", "NFKBIA", "IL15RA", "PPP1R15A", "BHLHE40", "SQSTM1", "MXD1", "IRF1", "LITAF", "TNFSF9", "PFKFB3","TRAF1", "CD80", "CFLAR", "GADD45B", "CCL5", "IL12B")
+
+
+gene_list_inflammatory <- c("ICAM1", "NFKBIA",  "MXD1", "IRF1", "RGS1", "TNFSF9", "CD40", "CCL5", "CCL22", "CCR7", "JAK2",  "SOS1", "STAT3", "STAT1", "IL15",  "IL2RG", "PIK3R1", "IL15RA", "IL21R", "STAT4", "SOCS2", "IL12B")
+
+
+gene_list_IFNgamma <- c("PSME2", "TRAFD1", "PSME1", "ICAM1",  "SAMHD1", "STAT1", "PDE4B", "SPPL2A","NFKBIA", "IL15RA", "IRF1", "FAS", "CD274", "CD40","CD69", "STAT4", "CCL5","Cxcl9","JAK2","IL18BP","NFKBIA")
+
+gene_list_IFNalpha <- c("GBP2","NCOA7")
+
+
+gene_list_IFNa_g <- c("BST2","IFIH1","IFIT2","IFITM2","IFITM3","IRF7","ISG15","MX1","STAT2","USP18")
+
+
+
+gene_list_maturation <- c("STAT1", "CLIC4",  "TANK", "TNFAIP3", "MARCKSL1", "NFKBIA", "IL15RA", "IRF1", "RGS1", "GPD2", "TNFSF9", "TRAF1", "CD80", "CFLAR", "GADD45B", "SERPINB9", "CD200", "SPINT2", "FAM49A", "GNB4","RASA2",  "GYPC", "BIRC2", "RELB", "POGLUT1", "INSL6", "MARCKSL1", "IL15RA", "LAPTM4B", "HTRA2", "TMEM19", "MXD1",  "SWAP70", "PCGF5", "IRF1", "VWA5A", "SERPINB1A", "LGMN", "FAS", "PFKFB3", "TMEM39A", "BCL2L14", "SCPEP1", "RNF115", "ZMYND15","TXNDC17", "SCIN", "CD274", "CFLAR", "CD40", "STAP2", "IL21R", "KTN1", "NOSTRIN", "TMEM123", "ANXA3", "SERPINB6B", "SERPINB9", "NUDT17", "CCL5", "GLIPR2", "SAMSN1", "CACNB3", "CCR7", "SOCS2", "FSCN1")
+
+
+ gene_bin_val_df <- data.frame(
+
+as.numeric(gene_list_all %in% gene_list_cell_cycle),
+as.numeric(gene_list_all %in% gene_list_tnf_via_Nfkb),
+as.numeric(gene_list_all %in% gene_list_inflammatory),
+as.numeric(gene_list_all %in% gene_list_IFNgamma),
+as.numeric(gene_list_all %in% gene_list_IFNalpha),
+as.numeric(gene_list_all %in% gene_list_IFNa_g),
+as.numeric(gene_list_all %in% gene_list_maturation)
+
+)
+
+
+gene_list_all <- tolower(gene_list_all)
+
+firstup <- function(x) {
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+
+
+
+gene_list_all <- firstup(gene_list_all)
+exp_dataframe <- data.frame(norm.data@assays$RNA@data)
+exp_dataframe_all <- data.frame(t(exp_dataframe[gene_list_all,]))
+
+
+colnames(gene_bin_val_df) <- c("cell_cycle","tnf_via_Nfkb","inflammatory", "IFNgamma","IFNalpha","IFNa_g","maturation")
+rownames(gene_bin_val_df) <- gene_list_all
+
+
+exp_dataframe_all  <- cbind(exp_dataframe_all,clusters$clusters_res1.3)
+colnames(exp_dataframe_all)[128] <- "clusters"
+
+known_levels <- c("C3", "C0", "C2","C1")
+my_order <- order(factor(exp_dataframe_all$clusters, levels = known_levels, ordered=TRUE))
+exp_dataframe_all  <- exp_dataframe_all[my_order, ]
+
+exp_dataframe_all <- data.frame(t(exp_dataframe_all))
+exp_dataframe_all <- exp_dataframe_all[-c(128), ]
+
+
+exp_mat_all <- as.matrix(exp_dataframe_all)
+
+exp_mat_all <- apply(exp_mat_all, 2, as.numeric)
+rownames(exp_mat_all) <- rownames(exp_dataframe_all)
+
+
+
+#tiff("test.tiff", units="in", width=20, height=11, res=300)
+# insert ggplot code
+
+pheatmap(exp_mat_all,fontsize = 5,
+        cluster_rows = T,
+         cluster_cols = FALSE,
+          legend = T,
+          show_rownames = T, 
+          show_colnames = T, 
+         cellwidth =3, 
+         cellheight =5,
+         annotation_col= clusters,
+      annotation_row = gene_bin_val_df)
+```
