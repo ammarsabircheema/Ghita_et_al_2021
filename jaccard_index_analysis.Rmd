@@ -1,0 +1,99 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+---
+title: "Jaccard Index Analysis"
+author: "Ammar Sabir Cheema"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# loading libraries
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+```
+# Read the cluster markers for first dataset
+```{r}
+aa <- list.files(path = "/home/user/jac_analysis/", pattern = "merad", all.files = TRUE,
+            full.names = FALSE, recursive = FALSE,
+            ignore.case = FALSE, include.dirs = FALSE)
+ print(aa)
+
+ dataset_merad <- lapply(aa, read.table)
+ names(dataset_merad) <- list.files(path="/home/user/jac_analysis/", pattern = "merad", full.names=FALSE)
+
+ names(dataset_merad) <- sub("cluster", "C", names(dataset_merad))
+ names(dataset_merad) <- sub("merad_sc_data_only_cDC1.txt", "MD", names(dataset_merad))
+ names(dataset_merad)
+
+# I only keep the gene names. 
+ for (i in 1:length(dataset_merad)) {
+   dataset_merad[[i]] <- rownames(dataset_merad[[i]])
+}
+``` 
+ 
+# Read the cluster markers for second dataset
+```{r}
+bb <- list.files(path = "/home/user/jac_analysis/", pattern = "wo_M1", all.files = TRUE,
+            full.names = FALSE, recursive = FALSE,
+            ignore.case = FALSE, include.dirs = FALSE)
+ 
+ 
+ dataset_ghita <- lapply(bb, read.table)
+ names(dataset_ghita) <- list.files(path="/home/user/jac_analysis/", pattern = "wo_M1", full.names=FALSE)
+ names(dataset_ghita) <- sub("cluster", "C", names(dataset_ghita))
+ names(dataset_ghita) <- sub("wo_M1_wo_conta.txt", "GD", names(dataset_ghita))
+ names(dataset_ghita)
+
+
+# I only keep the gene names. 
+for (i in 1:length(dataset_ghita)) {
+  dataset_ghita[[i]] <- rownames(dataset_ghita[[i]])
+}
+```
+
+# Compute the size of intersection between list of genes of pairs of different clusters of the tissues
+# and compute the Jaccard index for each pair of clusters. Store both information in two different dataframes
+
+```{r}
+jaccard_index_df = data.frame()
+intersection_df = data.frame()
+for(i in 1:length(dataset_merad)) {
+  jaccard_index_set = vector()
+  details_set = vector()
+  for(j in 1:length(dataset_ghita)) {
+    jaccard_index = length( intersect( dataset_merad[[i]], dataset_ghita[[j]])) / length( unique( c( dataset_merad[[i]], dataset_ghita[[j]])))
+    jaccard_index_set = append( jaccard_index_set, jaccard_index)
+    details_set = append( details_set, length( intersect( dataset_merad[[i]], dataset_ghita[[j]])))
+  } 
+  jaccard_index_df = rbind( jaccard_index_df, jaccard_index_set)
+  intersection_df = rbind( intersection_df, details_set)
+}
+names( jaccard_index_df) = names(dataset_ghita)
+row.names( jaccard_index_df) = names(dataset_merad)
+names( intersection_df) = names(dataset_ghita)
+row.names( intersection_df) = names(dataset_merad)
+
+
+# Display the data.frame of jaccard indexes as a heatmap
+break_list = seq(0, 0.4, by = 0.05)
+pheatmap::pheatmap(
+  jaccard_index_df,
+  color = colorRampPalette(brewer.pal(n = 9, name = "Blues"))(length( break_list)),
+  cellwidth =40, cellheight =30,
+  fontsize = 12,
+  show_rownames = T, show_colnames = T,
+  angle_col = 45,
+  breaks = break_list,
+  display_numbers = matrix( paste0( as.matrix( intersection_df), " (", 100*signif( as.matrix( jaccard_index_df), 2), "%)"), ncol = length(dataset_ghita)),
+  cluster_rows = FALSE, cluster_cols = FALSE,
+  treeheight_row = 0, treeheight_col=0
+)
+```
