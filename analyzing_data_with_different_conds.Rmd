@@ -1,0 +1,1290 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+ 
+# starting files: gene counts . (UMI have been treated)
+
+---
+title: "R script for the treatment of Ghita’s data (generated using Pierre Milpieds’ protocol)"
+author: "Ammar Sabir Cheema"
+date: "03/04/2020"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+# loading libraries:
+```{r load libraries}
+library(Seurat)
+library(dplyr)
+library(devtools)
+library(ggrepel)
+library(uwot)
+library(scales)
+```
+
+
+# Reading input files
+```{r}
+y <- read.table("filtered_endogenes_UMI.csv", sep=",", header=T, row.names=1)
+x <- as.data.frame(t(y))
+head(names(x))
+rm(y)
+```
+
+# Reading metadata files
+```{r}
+sampleinfo=read.delim("AddBC_filtered_metadata_allFeatures.csv",sep=",", header=T, row.names=1)
+metadata = sampleinfo[rownames(sampleinfo) %in% colnames(x), , drop=F]
+all(colnames(x)==rownames(metadata))
+```
+
+# For removing missing data 
+```{r}
+missing_data <- rownames(metadata[which(metadata$Well=="#N/D" & metadata$Plate=="plate14" ),])
+length(missing_data)
+cells_wo_missing_data <- setdiff(rownames(metadata), missing_data)
+metadata1 <- metadata[rownames(metadata) %in% cells_wo_missing_data, , drop=F]
+metadata1[metadata1=="#N/D"] <- NA
+sum(is.na(metadata1))
+head(metadata1[metadata1=="#N/D"])
+dim(metadata)
+dim(metadata1)
+```
+
+
+
+
+
+
+# To remove M1 experiment data 
+```{r}
+m1_data <- rownames(metadata1[which(metadata1$experiment=="M1" ),])
+length(m1_data)
+cells_wo_m1_data <- setdiff(rownames(metadata1), m1_data)
+metadata2 <- metadata1[rownames(metadata1) %in% cells_wo_m1_data, , drop=F]
+
+dim(metadata1)
+dim(metadata2)
+```
+
+
+```{r}
+dim(x)
+
+x1 <- as.data.frame(t(x))
+x2 = x1[rownames(x1) %in% rownames(metadata2), ,drop=F]
+
+dim(x2)
+dim(metadata2)
+
+
+y <- as.data.frame(t(x2))
+```
+
+
+# Create Seurat object
+```{r}
+y_seurat <- CreateSeuratObject(y, min.cells = 5, min.features = 600, project = "Ghita")
+table(y_seurat@meta.data$orig.ident) 
+dim(y_seurat@assays$RNA)
+```
+
+
+
+# Some Quality Checks (QC) 
+```{r}
+VlnPlot(object = y_seurat, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat@meta.data$nCount_RNA)
+hist(y_seurat@meta.data$nFeature_RNA)
+
+metadata3 = metadata2[rownames(metadata2) %in% colnames(y_seurat), , drop=F]
+write.table(metadata3, "metadata3_after_removing_M1_only.txt", sep="\t", quote=F)
+dim(metadata3)
+head(metadata3)
+
+
+##histograms for number of counts, according to label: 
+#class(y_seurat@meta.data$nCount_RNA)
+df_counts <- as.data.frame(y_seurat@meta.data$nCount_RNA)
+df_counts$phenotype <- metadata3$Genotype
+df_counts$plate <- metadata3$Plate
+df_counts$experiment <- metadata3$experiment
+df_counts$mouse_age <- metadata3$mouse_age
+df_counts$id <- rownames(metadata3) # these are cells (id)
+
+
+
+# histogram number of reads, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata3$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to genotype
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata3$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata3$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata3$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata3$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to phenotype
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata3$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata3$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nFeature_RNA, fill=as.factor(metadata3$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+
+```
+
+# percentage of mitochondrial genes 
+```{r}
+
+mito.genes <- grep("^mt", rownames(y_seurat@assays$RNA), value=T)
+mito.genes
+y_seurat[["percent.mt"]] <- PercentageFeatureSet(y_seurat, pattern = "^mt")
+
+
+VlnPlot(y_seurat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# histogram percent of mitochondrial genes, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat$percent.mt, fill=as.factor(metadata3$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram percent of mitochondrial genes, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat$percent.mt, fill=as.factor(metadata3$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+
+
+
+
+
+percent.mito <- Matrix::colSums(y_seurat@assays$RNA@data[mito.genes, ])/Matrix::colSums(y_seurat@assays$RNA@data)
+
+y_seurat <- AddMetaData(y_seurat, percent.mito, "percent.mito")
+
+# This histogram shows the expression ratio of distribution of mitochondrial genes
+hist(y_seurat@meta.data$percent.mito, breaks=seq(from=0,to=1,by=0.01),xlab="Mitochondrial gene expression ratio", main="Distribution of the mitochondrial gene expression ratio")
+
+
+max(y_seurat@meta.data$percent.mito) < 0.1
+#y_seurat <- AddMetaData(y_seurat, percent.mito, "percent.mito")
+```
+
+
+
+# FeatureScatter makes a scatter plot of two features 
+```{r}
+plot1 <- FeatureScatter(y_seurat, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(y_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+#CombinePlots(plots = list(plot1, plot2))
+
+plot1
+plot2
+```
+
+# Plot3 and plot4 are similar to plot1 and plot2 but just axis are changed
+```{r}
+
+plot3 <- FeatureScatter(y_seurat, feature1 = "nFeature_RNA", feature2 = "percent.mt")
+plot4 <- FeatureScatter(y_seurat, feature1 = "nFeature_RNA", feature2 = "nCount_RNA")
+#CombinePlots(plots = list(plot3, plot4))
+plot3
+plot4
+```
+
+# Subsetting seurat object
+```{r}
+
+
+y1_seurat <- subset(y_seurat, subset = nFeature_RNA > 550 & nFeature_RNA < 10000 & percent.mt < 10)
+dim(y1_seurat)
+
+```
+
+##########################################################
+##########################################################
+##########################################################
+
+
+# Normalization
+```{r}
+norm.data <- NormalizeData(object = y1_seurat, normalization.method = "LogNormalize", scale.factor = 1e6)
+
+
+dim(norm.data@assays$RNA@data)
+```
+
+# Identification of highly variable features (feature selection)
+Here we identify 1000 most variable features and plot 40 of them on the plot shown below
+Detect features that are variable on a feature plot
+```{r}
+
+norm.data <- FindVariableFeatures(object=norm.data, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+
+# Identify the 40 most highly variable genes
+top40 <- head(VariableFeatures(norm.data), 40)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(norm.data)
+
+# In plot2 we label the plot1 with top40 variable genes we have detected above
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+
+plot2
+```
+
+
+
+
+# Scaling data
+```{r}
+all.genes <- rownames(norm.data)
+norm.data <- ScaleData(norm.data, features = all.genes)
+#write.table(norm.data@assays$RNA@scale.data, "log_norm_scaled_data_scapin_time_course_PM_protoc.txt", sep="\t", quote=F)
+```
+
+# Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data <- RunPCA(norm.data, npcs = 30, features = VariableFeatures(object = norm.data))
+norm.data <- RunICA(norm.data, nics = 30, features = VariableFeatures(object = norm.data))
+```
+
+# Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+pca_coordinates <- norm.data@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+# Heatmap: 
+```{r}
+DimHeatmap(norm.data, dims = 1, cells = 470, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data, dims = 2, cells = 470, balanced = TRUE)
+DimHeatmap(norm.data, dims = 1:9, cells = 470, balanced = TRUE)
+```
+
+# Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data))
+head(Cells(norm.data))
+head(rownames(x = norm.data))
+ncol(x = norm.data)
+nrow(x = norm.data)
+```
+
+# Determine the ‘dimensionality’ of the dataset
+# From the plot shown below it is clear that first seven principle components are responsible for most of the variability
+```{r}
+norm.data <- JackStraw(norm.data, num.replicate = 100)
+norm.data <- ScoreJackStraw(norm.data, dims = 1:20)
+
+JackStrawPlot(norm.data, dims = 1:15)
+
+ElbowPlot(norm.data)
+```
+
+# Clustering the cells
+We tried several resolutions for calculating clusters but found 0.2 to be best based on the number of clusters
+```{r}
+norm.data <- FindNeighbors(norm.data, reduction = "pca", dims = 1:7, k.param=9, compute.SNN=TRUE, force.recalc=TRUE)
+
+norm.data <- FindClusters(norm.data, resolution = 0.2, algorithm=1, random.seed=0)
+# Look at cluster IDs of the first 5 cells
+head(Idents(norm.data), 5)
+clusters_res0.2 <- norm.data$RNA_snn_res.0.2
+
+norm.data <- RunUMAP(norm.data, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data, reduction = "umap", pt.size=1)
+```
+
+
+  
+
+
+## Dimensional reduction plot, with cells colored by a quantitative feature
+```{r Expression of selected genes of interest 1}
+gene_list <- c("Ms4a4a","Cxcl12","Lifr","Cd2", "Cd3d", "Cd3e", "Cd3g", "Gimap3","Gimap6", "Gimap7","Lat", "Lck", "Trac", "Trbc2","C1qa","C1qb","C1qc","C3ar1","Fcer1g","Cd40","Irf1","Ikbkb","Xcr1","Clec9a","Cadm1","Cd80","Cd86","Cd8a","Cd274","Batf3","Gpr141b","Tcf4","Ccl3","Ccl5","Tnf","Ccr7","Il12b","Vim","Zbtb46","Ms4a6c","Ms4a6b","Lgals3","Ywhah","Anxa5","Spi1","Cd300a","Rin3","Lair1","Fyb","Khk","Slamf9","Fyb","Mir155hg","Mx1","Oasl1","Rufy3","Bex6","Bcl2l1","Sema6d","Nr4a1","Nr4a3","Ccr7", "Il2rg")
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap"))
+}
+
+```
+
+
+# Adding genes of interest to the dataframe
+```{r}
+norm_data_restricted <- as.data.frame(norm.data@assays$RNA@data)[rownames(norm.data@assays$RNA@data) %in% c("Cxcl9","Cxcl10","Irf1","Ikbkb"), ,drop=F]
+norm_data_restricted <- as.data.frame(t(norm_data_restricted))
+write.table(norm_data_restricted, "norm_data_restricted_wo_M1_cont_contaminants.txt", sep="\t", quote=F)
+norm_data_restricted <- read.table("norm_data_restricted_wo_M1_cont_contaminants.txt", sep="\t", header=T, row=1)
+head(norm_data_restricted)
+```
+
+
+
+
+# make violin plots
+```{r}
+gene_list_vln_plt <- c("Irf1","Ikbkb","Xcr1","Clec9a","Cadm1","Cd80","Cd86","Cd8a","Cd274","Gpr141b","Batf3")
+
+
+for (i in 1:length(gene_list_vln_plt)) 
+  {
+  print(VlnPlot(object = norm.data, features = gene_list_vln_plt[i]))
+}
+
+```
+
+
+# extract markers for the clusters, and show some of them:
+```{r extract markers for the clusters norm.data}
+for(i in 0:6) {
+assign(paste("cluster", i,".markers", sep = ""), FindMarkers(norm.data, ident.1 = i, logfc.threshold = 1, test.use = "bimod", only.pos = TRUE))
+  print(paste("cluster", i,".markers", sep = ""))
+  print(head(get(paste("cluster", i,".markers", sep = "")),n=20))
+  write.table(get(paste("cluster", i,".markers", sep = "")),paste("cluster", i,".markers_wo_M1_only.txt", sep = ""),row.names = TRUE)
+  }
+```
+
+# Removing the contaminants
+We have identified clusters 2, 4, 5, and 6 as contaminants. 
+```{r}
+
+### These are contaminants which were identified in the previous analysis in which M1 cells are also present
+contaminants_with_M1 <- read.table("contaminants_ghita_data_like.txt",sep = "\n")
+length(contaminants_with_M1[,1])
+
+
+### These are contaminants which were identified in the previous analysis in which M1 cells are removed
+contaminants_without_M1 <- 
+rownames(tSNE_UMAP_coordinates_ok[which(tSNE_UMAP_coordinates_ok$clusters_res0.2 == "C2" | tSNE_UMAP_coordinates_ok$clusters_res0.2 == "C4" | tSNE_UMAP_coordinates_ok$clusters_res0.2 == "C5"| tSNE_UMAP_coordinates_ok$clusters_res0.2 == "C6"),])
+
+
+metadata4 <- metadata3[rownames(metadata3) %in% cells_wo_conta, , drop=F] 
+dim(metadata4)
+```
+
+```{r}
+y2 <- as.data.frame(t(x))
+y3 = y2[rownames(y2) %in% rownames(metadata4), ,drop=F]
+y4 <- as.data.frame(t(y3))
+write.table(y4,"y4_gene_expression_wo_M1_wo_conta.txt", sep="\t", quote=F)
+```
+
+
+# Regenerating the Seurat object after removing the contaminants
+
+```{r}
+y_seurat2 <- CreateSeuratObject(y4, min.cells = 5, min.features = 500, project = "Ghita_data_single_cell_removed_contaminants")
+
+dim(y_seurat2)
+
+```
+
+
+# Some Quality Checks (QC)
+```{r}
+VlnPlot(object = y_seurat2, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat2@meta.data$nCount_RNA)
+hist(y_seurat2@meta.data$nFeature_RNA)
+
+
+metadata5 = metadata4[rownames(metadata4) %in% colnames(y_seurat2), , drop=F]
+write.table(metadata5, "metadata5_wo_M1_wo_conta.txt", sep="\t", quote=F)
+dim(metadata5)
+
+df_counts <- as.data.frame(y_seurat2@meta.data$nCount_RNA)
+df_counts$phenotype <- metadata5$Genotype
+df_counts$plate <- metadata5$Plate
+df_counts$experiment <- metadata5$experiment
+df_counts$mouse_age <- metadata5$mouse_age
+df_counts$id <- rownames(metadata5) # these are cells (id)
+
+
+# histogram number of reads, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nCount_RNA, fill=as.factor(metadata5$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to genotype
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nCount_RNA, fill=as.factor(metadata5$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nCount_RNA, fill=as.factor(metadata5$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of reads, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nCount_RNA, fill=as.factor(metadata5$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nFeature_RNA, fill=as.factor(metadata5$Plate))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to phenotype
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nFeature_RNA, fill=as.factor(metadata5$Genotype))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to experiment
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nFeature_RNA, fill=as.factor(metadata5$experiment))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+# histogram number of genes/features, according to mouse_age
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nFeature_RNA, fill=as.factor(metadata5$mouse_age))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+```
+
+##Normalization in natural log:
+```{r Normalization in natural log y_seurat2}
+norm.data2 <- NormalizeData(object = y_seurat2, normalization.method = "LogNormalize", scale.factor = 1e6)
+write.table(norm.data2@assays$RNA@data, "log_norm_filtered_data__wo_M1_wo_conta_ghita_data_TPVM.txt", sep="\t", quote=F)
+```
+
+# Identification of highly variable features (feature selection)
+# Here we identify 1000 most variable features and plot 40 of them on the plot shown below
+# Detect features that are variable on a feature plot
+```{r}
+norm.data2 <- FindVariableFeatures(object=norm.data2, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+
+# Identify the 40 most highly variable genes
+top40 <- head(VariableFeatures(norm.data2), 40)
+
+# plot variable features with and without labels
+# We plot the variable features in the same way as we find the Variable features in the above method
+plot1 <- VariableFeaturePlot(norm.data2)
+
+# In plot2 we label the plot1 with top40 variable genes we have detected above
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+#CombinePlots(plots = list(plot1, plot2))
+plot2
+```
+
+# Making dataframe of normalized expression values for specific genes
+```{r}
+
+# Reading normalized expression values from seurat object
+norm_exp_val_raw <- as.data.frame(norm.data2@assays$RNA@data)
+dim(norm_exp_val_raw)
+norm_exp_val <- as.data.frame(t(norm_exp_val_raw))
+
+
+# Attaching columns of clusters calculated from clustering
+clusters_res0.6 <- read.table("clusters_res0.6.txt", sep="\t", header=T, row=1)
+norm_exp_val_w_clust <- cbind(norm_exp_val, clusters_res0.6)
+dim(norm_exp_val_w_clust)
+
+# Arranging the dataframe based on the clusters column
+norm_exp_val_ordered <- norm_exp_val_w_clust[with(norm_exp_val_w_clust, order(clusters_res0.6)),]
+dim(norm_exp_val_ordered)
+
+# Taking transpose of clusters
+norm_exp_val_ordered_transposed <- as.data.frame(t(norm_exp_val_ordered))
+dim(norm_exp_val_ordered_transposed)
+
+
+
+
+
+# Writing the table 
+write.table(norm_exp_final, "norm_exp_final_wo_M1_wo_conta.txt", sep="\t", quote=F)
+
+
+# Writing the table for cells ordered by clusters
+cell_names <- (rownames(norm_exp_val_ordered))
+ordered_clusters <- norm_exp_val_ordered[,"x"]
+cell_ordered_by_clusters_df <- data.frame(cell_names,ordered_clusters)
+write.table(cell_ordered_by_clusters_df,"cell_ordered_by_clusters_wo_M1_wo_conta.txt", sep="\t", quote=F) 
+```
+
+
+```{r}
+all.genes <- rownames(norm.data2)
+norm.data2 <- ScaleData(norm.data2, features = all.genes)
+```
+
+
+
+## Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data2 <- RunPCA(norm.data2, npcs = 30, features = VariableFeatures(object = norm.data2))
+norm.data2 <- RunICA(norm.data2, nics = 30, features = VariableFeatures(object = norm.data2))
+```
+
+# Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data2[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data2[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data2, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data2, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data2, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data2, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data2, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+
+pca_coordinates <- norm.data2@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data2@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+
+# Heatmap:
+```{r}
+DimHeatmap(norm.data2, dims = 1, cells = 360, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data2, dims = 2, cells = 360, balanced = TRUE)
+
+DimHeatmap(norm.data2, dims = 1:9, cells = 360, balanced = TRUE)
+```
+
+# Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data2))
+head(Cells(norm.data2))
+head(rownames(x = norm.data2))
+ncol(x = norm.data2)
+nrow(x = norm.data2)
+```
+
+# Determine the ‘dimensionality’ of the dataset
+# From the plot shown below it is clear that first six principle components are responsible for most of the variability
+```{r}
+norm.data2 <- JackStraw(norm.data2, num.replicate = 100)
+norm.data2 <- ScoreJackStraw(norm.data2, dims = 1:20)
+
+JackStrawPlot(norm.data2, dims = 1:15)
+
+ElbowPlot(norm.data2)
+```
+
+# Cluster the cells using only first six principle components
+```{r}
+norm.data2 <- FindNeighbors(norm.data2, reduction = "pca", dims = 1:6, k.param=9, compute.SNN=TRUE, force.recalc=TRUE)
+
+norm.data2 <- FindClusters(norm.data2, resolution = 0.6, algorithm=1, random.seed=0)
+
+#Look at cluster IDs of the first 5 cells
+head(Idents(norm.data2), 5)
+clusters_res0.6 <- norm.data2$RNA_snn_res.0.6
+write.table(clusters_res0.6, "clusters_res0.6_wo_M1_wo_conta.txt", sep="\t", quote=F)
+```
+
+
+
+# Running UMAP for clustering 
+```{r UMAP}
+
+norm.data2 <- RunUMAP(norm.data2, umap.method="uwot", dims = 1:6, seed.use=10,  n.components=2, n.neighbors = 7, spread=1, min.dist=0.6)
+
+DimPlot(norm.data2, reduction = "umap", pt.size=2)
+UMAP_coord <- norm.data2@reductions$umap@cell.embeddings
+write.table(UMAP_coord, "UMAP_coordinates_wo_M1_wo_conta.txt", sep="\t", quote=F)
+```
+
+
+
+# Genes shown in heatmap (Merad paper: fig 1b)
+```{r}
+# These genes are not present in our data ("Aldh1a2","Il4i1", "Cd209a","H2-DMb2","Itgam")
+gene_list <- c("Ccr7", "Fscn1", "Cd40", "Cd274", "Pdcd1lg2", "Cd200", "Fas", "Il4ra", "Socs2", "Relb", "Xcr1", "Clec9a", "Cadm1", "Naaa", "Sirpa")
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap",min.cutoff = 0,max.cutoff = 7.5,pt.size=2))
+}
+```
+
+
+# Genes for Maturation (Merad paper: fig 1c)
+```{r}
+gene_list <- c("Cd40", "Cd80", "Cd86", "Cd83")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap" , min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+```
+
+# Genes for regulation (Merad paper: fig 1c)
+```{r}
+gene_list <- c("Cd274", "Pdcd1lg2", "Cd200", "Fas", "Socs1", "Socs2")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+```
+
+# Genes for Migration (Merad paper: fig 1c)
+```{r}
+gene_list <- c("Ccr7", "Myo1g", "Cxcl16", "Adam8", "Icam1", "Fscn1", "Marcks", "Marcksl1")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+```
+
+
+# Genes which are TLR and adapters (Merad paper: fig 1c)
+```{r}
+# These genes are not present in our data ("Tlr8","Tlr7", "Tlr6", "Tlr5","Tlr4","Tlr11")
+gene_list <- c("Myd88", "Ticam1" , "Tlr3", "Tlr2")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+}
+
+
+```
+
+# Dimensional reduction plot, with cells colored by a quantitative feature
+## Few genes are not present in this list inc. "Ms4a4a","Cd2","Clec12"
+```{r Expression of selected genes of interest 2}
+
+
+gene_list <- c("C1qa","C1qb","C1qc","C3ar1","Fcer1g","Cd40","Irf1","Ikbkb","Xcr1","Clec9a","Cadm1","Cd80","Cd83","Cd86","Cd8a","Cd274","Batf3","Gpr141b","Tcf4","Ccl3","Ccl5","Tnf","Il12b","Vim","Zbtb46","Ms4a6c","Ms4a6b","Lgals3","Ywhah","Anxa5","Spi1","Cd300a","Rin3","Lifr","Lair1","Fyb","Khk","Slamf9","Fyb","Mir155hg","Mx1","Oasl1","Rufy3","Bex6","Bcl2l1","Sema6d","Nr4a1","Nr4a3","Ccr7", "Cd3d","Cxcl10","Cxcl9","Ccl22","Psmb1",   "Tapbp",   "Rab14",   "Uggt1",   "Snap23",   "Slamf7" ,"Mreg" , "Irf8", "Id2"  )
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size=2))
+}
+
+
+gene_list <- c("Irf8", "Batf3" , "Id2")
+
+
+for (i in 1:length(gene_list)) {
+  
+
+print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+tiff(paste(gene_list[i],"1",".tiff",sep=""), units="in", width=20, height=11, res=300)
+print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap", min.cutoff = 0, max.cutoff = 7.5, pt.size = 2))
+dev.off()
+}
+```
+
+
+
+# make violin plots
+```{r}
+
+gene_list_vln_plt <- c("Irf1","Ikbkb","Xcr1","Clec9a","Cadm1","Cd80","Cd86","Cd8a","Cd274","Gpr141b","Batf3","Ccl5","Cxcl10","Cxcl9", "Ccl22","Il12b","Mreg", "Irf8", "Id2")
+
+
+for (i in 1:length(gene_list_vln_plt)) {
+  p <- VlnPlot(object = norm.data2, features = gene_list_vln_plt[i],y.max = 10, cols = c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+  print(p)
+  tiff(paste(gene_list_vln_plt[i],".tiff",sep=""), units="in", width=20, height=11, res=300)
+  print(p)
+  dev.off()
+  }
+
+
+```
+
+
+
+
+# extract markers for the clusters, and show some of them:
+```{r extracting markers for the clusters norm.data2}
+ 
+ for(i in 0:6) {
+  assign(paste("cluster", i,".markers", sep = ""), FindMarkers(norm.data2, ident.1 = i, test.use = "bimod", only.pos = TRUE))
+    print(paste("cluster", i,".markers", sep = ""))
+    print(head(get(paste("cluster", i,".markers", sep = "")),n=20))
+    write.table(get(paste("cluster", i,".markers", sep = "")),paste("cluster", i,".markers_wo_M1_wo_conta.txt", sep = ""),row.names = TRUE)
+    
+      }
+
+
+
+### Changing both Ikbkb_FF and Irf1_FF to Control_FF to see Differential gene expression
+ metadata5$new_genotype <- metadata5$Genotype
+ levels(metadata5$new_genotype)[4]
+ levels(metadata5$new_genotype)[4] <- "Control_FF"
+ levels(metadata5$new_genotype)[2]
+ levels(metadata5$new_genotype)[2] <- "Control_FF"
+
+
+  Idents(norm.data2) <- metadata5$new_genotype
+  #print(metadata5$new_genotype)
+```
+  
+
+
+
+
+
+
+# Calculating differential gene expression cluster-wise for controls (Irf1_FF and Ikbkb_FF) vs mutants (Ikbkb_dXCR1)
+# Below we show first 30 of the differentially expressed genes, for each cluster.
+```{r}   
+   for(i in 0:6)
+  {
+ 
+  assign(paste("DGE_Control_C", i,"_VS_Ikbkb_dXCR1_C",i, sep = ""), FindMarkers(norm.data2, ident.1 =  paste("Ikbkb_dXCR1_C", i, sep = ""),ident.2= paste("Control_FF_C", i, sep = ""),min.pct = 0.5,test.use = "bimod" ))
+  write.table(get(paste("DGE_Control_C", i,"_VS_Ikbkb_dXCR1_C",i, sep = "")),paste("DGE_Control_C", i,"_VS_Ikbkb_dXCR1_C",i, "_wo_M1_wo_conta.txt",sep = ""),row.names=TRUE) 
+  }
+  
+
+ 
+  head(DGE_Control_C0_VS_Ikbkb_dXCR1_C0,n=30)
+  head(DGE_Control_C1_VS_Ikbkb_dXCR1_C1,n=30)
+  head(DGE_Control_C2_VS_Ikbkb_dXCR1_C2,n=30)
+  head(DGE_Control_C3_VS_Ikbkb_dXCR1_C3,n=30)
+  head(DGE_Control_C4_VS_Ikbkb_dXCR1_C4,n=30)
+  head(DGE_Control_C5_VS_Ikbkb_dXCR1_C5,n=30)
+  head(DGE_Control_C6_VS_Ikbkb_dXCR1_C6,n=30)
+``` 
+ 
+ 
+
+# Calculating differential gene expression cluster-wise for controls (Irf1_FF and Ikbkb_FF) vs mutants (Irf1_dXCR1) 
+# Below we show first 30 of the differentially expressed genes, for each cluster.
+```{r} 
+  for(i in 0:6)
+  {
+ 
+  assign(paste("DGE_Control_C", i,"_VS_Irf1_dXCR1_C",i, sep = ""), FindMarkers(norm.data2, ident.1 =  paste("Irf1_dXCR1_C", i, sep = ""),ident.2= paste("Control_FF_C", i, sep = ""),min.pct = 0.5,test.use = "bimod" ))
+ write.table(get(paste("DGE_Control_C", i,"_VS_Irf1_dXCR1_C",i, sep = "")),paste("DGE_Control_C", i,"_VS_Irf1_dXCR1_C",i, "_wo_M1_wo_conta.txt",sep = ""),row.names=TRUE) 
+  }
+ 
+  
+  head(DGE_Control_C0_VS_Irf1_dXCR1_C0,n=30)
+  head(DGE_Control_C1_VS_Irf1_dXCR1_C1,n=30)
+  head(DGE_Control_C2_VS_Irf1_dXCR1_C2,n=30)
+  head(DGE_Control_C3_VS_Irf1_dXCR1_C3,n=30)
+  head(DGE_Control_C4_VS_Irf1_dXCR1_C4,n=30)
+  head(DGE_Control_C5_VS_Irf1_dXCR1_C5,n=30)
+  head(DGE_Control_C6_VS_Irf1_dXCR1_C6,n=30)
+``` 
+ 
+  
+
+
+# We performed differential gene expression above and showed differentially expressed genes, but below we try to show first five genes which have p_val_adj < 0.05 using the head command for Control(Irf1_FF and Ikbkb_FF) vs mutant (Ikbkb_dXCR1)  
+```{r}
+  head(DGE_Control_C0_VS_Ikbkb_dXCR1_C0[which(DGE_Control_C0_VS_Ikbkb_dXCR1_C0$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C1_VS_Ikbkb_dXCR1_C1[which(DGE_Control_C1_VS_Ikbkb_dXCR1_C1$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C2_VS_Ikbkb_dXCR1_C2[which(DGE_Control_C2_VS_Ikbkb_dXCR1_C2$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C3_VS_Ikbkb_dXCR1_C3[which(DGE_Control_C3_VS_Ikbkb_dXCR1_C3$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C4_VS_Ikbkb_dXCR1_C4[which(DGE_Control_C4_VS_Ikbkb_dXCR1_C4$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C5_VS_Ikbkb_dXCR1_C5[which(DGE_Control_C5_VS_Ikbkb_dXCR1_C5$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C6_VS_Ikbkb_dXCR1_C6[which(DGE_Control_C6_VS_Ikbkb_dXCR1_C6$p_val_adj < 0.05 ),],n=5)
+``` 
+ 
+ 
+
+
+# We performed differential gene expression above and showed differentially expressed genes, but below we try to show first five genes which have p_val_adj < 0.05 using the head command for Control(Irf1_FF and Ikbkb_FF) vs mutant (Irf1_dXCR1)
+```{r}
+  head(DGE_Control_C0_VS_Irf1_dXCR1_C0[which(DGE_Control_C0_VS_Irf1_dXCR1_C0$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C1_VS_Irf1_dXCR1_C1[which(DGE_Control_C1_VS_Irf1_dXCR1_C1$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C2_VS_Irf1_dXCR1_C2[which(DGE_Control_C2_VS_Irf1_dXCR1_C2$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C3_VS_Irf1_dXCR1_C3[which(DGE_Control_C3_VS_Irf1_dXCR1_C3$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C4_VS_Irf1_dXCR1_C4[which(DGE_Control_C4_VS_Irf1_dXCR1_C4$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C5_VS_Irf1_dXCR1_C5[which(DGE_Control_C5_VS_Irf1_dXCR1_C5$p_val_adj < 0.05 ),],n=5)
+ 
+  head(DGE_Control_C6_VS_Irf1_dXCR1_C6[which(DGE_Control_C6_VS_Irf1_dXCR1_C6$p_val_adj < 0.05 ),],n=5)
+``` 
+ 
+
+
+# After performing differential gene expression we wanted to look at some genes in more detail  
+# The list of genes is given below, 
+# We will then make violin plots for these genes
+
+```{r} 
+ 
+  norm_data_restricted <- as.data.frame(norm.data2@assays$RNA@data)[rownames(norm.data2@assays$RNA@data) %in% c("Ccl5","Tfg","Ifit1","Txndc17","Ifitm2","S100a6","Cxcl16","Serinc3","Plac8","Ifitm3","Psmd8","Tapbp","Irf7","Bst2","Zbp1","Ifi27l2a","Cxcl9","Cxcl10","Ndufb10", "Rab14", "Slc8b1", "Celf2","Eef1d","Npc2","Reep5" , "Psmb1" , "Sin3b" , "Il2rg" , "Pdlim4", "Rps14" , "Ppp1ca" , "Vdac2" , "Anxa2" , "Stard3nl" , "Arpc1b" , "Ddx5" , "Naaa", "Rpl14" , "Laptm5" , "Park7" , "Arf4" , "Spcs1"  , "Mrpl20" , "Rex1bd" , "Fam32a" , "Mrpl35" , "Vdac3","Nrros" , "Dad1" , "Ssr4" , "Rps23" , "Uggt1", "Pdlim4" , "S100a6" , "Ndufb8" , "Ctsc" , "Selenow" , "Sin3b" , "Gapdh" , "Slc25a4" , "Rad23a" , "H2.T23","Lcp1" , "Lgmn" , "Ddx5" , "Dazap2" , "Stat1" , "Hnrnpk" , "Tpm3" , "Unc93b1" , "Vrk1","Rps3" , "Park7","Vim" , "Oaz1","Atp5c1" , "Trip11" , "Hint1" , "Rer1" , "Chmp6" ,"Aif1", "Sept7", "Irf5" , "S100a6" , "Fuca1"  , "Tmem258" , "Pfdn5"  , "Pfkp"  ,  "Ctsh" , "Ccl22","Ndufb1","Il12b","Irf3","Cd80", "Cd86", "Ifit3", "Ifi209" ,"Snap23","Lactb", "Ly86","Calr","Psma3","Psmb10","Icosl","Ube2k", "Bcl2a1b", "Ufm1","Slamf7","Eif4a1","Psmd14","Lamtor2","Scimp","Ifit2","Irf1","Ikbkb","Batf3","Irf8","Id2"
+), ,drop=F]
+  
+  norm_data_restricted <- as.data.frame(t(norm_data_restricted))
+  write.table(norm_data_restricted, "norm_data_restricted_wo_M1_wo_conta.txt", sep="\t", quote=F)
+  norm_data_restricted <- read.table("norm_data_restricted_wo_M1_wo_conta.txt", sep="\t", header=T, row=1)
+  metadata5 <- cbind(metadata5,norm_data_restricted)
+  metadata5 <- cbind(metadata5,tSNE_UMAP_coordinates_ok$clusters_res0.6)
+ 
+```
+
+
+# These are cluster-specific violin plots
+# Where gene_vio is list of genes for violin plot
+# And cluster_vio is list of clusters for cluster-specific plots
+```{r}  
+  metadata5_cluster0 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C0"),]
+  metadata5_cluster1 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C1"),]
+  metadata5_cluster2 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C2"),]
+  metadata5_cluster3 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C3"),]
+  metadata5_cluster4 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C4"),]
+  metadata5_cluster5 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C5"),]
+  metadata5_cluster6 <- metadata5[which(metadata5$'tSNE_UMAP_coordinates_ok$clusters_res0.6' =="C6"),] 
+  
+  
+   
+clusters_vio <- c(0,5,6,4,6,5,6,2,2)
+gene_vio <- c('Ifitm2','Ifitm2','Ifitm2','Psmd8','Ifitm3','Ifitm3','Tapbp','Txndc17','Ccl5','Ifitm3')
+
+
+
+for (i in 1:length(clusters_vio)){
+ 
+
+target <- "new_genotype"
+var1 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+target <- gene_vio[i]
+var2 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+violin_plot <- ggplot(get(paste0("metadata5_cluster", clusters_vio[i], sep="")), aes(factor(var1 ), var2)) 
+
+print(violin_plot + geom_violin(aes(fill = factor(var1)), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + labs(title =paste0("metadata5_cluster", clusters_vio[i], sep=""))+ylab(paste0("Expresion level of ", gene_vio[i], sep="")) + ylim(0,10))   
+ 
+
+
+}
+```
+
+# Violin plots on Ghita's request
+
+Cluster-dependent violin plots
+```{r}
+
+clusters_vio <- c(0,0,0,0,0,1,2,2,2,2,2,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,5,5,5,5,5,5,5,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,3,3,4,4,5,5,6,6,6,6,6,4,4,1,2,1,1,2,4,4,4,4,4,4,4,2,2,2,1,6,4,3,2,4,4,4,4,4,4,4,4,4,0,1,2,3,4,5,6,0,1,2,3,4,5,6)
+
+gene_vio <- c('Ndufb10', 'Rab14', 'Slc8b1', 'Celf2','Eef1d','Npc2','Reep5' , 'Psmb1' , 'Sin3b' , 'Il2rg' , 'Pdlim4',"Rps14" ,'Ppp1ca' , 'Vdac2' , 'Anxa2' , 'Stard3nl' , 'Arpc1b' , 'Ddx5' , 'Hnrnpk' , 'Naaa', 'Rpl14' , 'Laptm5' , 'Park7' , 'Arf4' , 'Spcs1' , 'Rps3','Hnrnpk'  , 'Ctsc' , 'Mrpl20' , 'Rex1bd' , 'Fam32a' , 'Mrpl35' , 'Vdac3','Nrros' , 'Dad1' , 'Ssr4' , 'Rps23' , 'Uggt1','Txndc17' , 'Pdlim4' , 'S100a6' , 'Ndufb8' , 'Ctsc' , 'Selenow' , 'Sin3b' , 'Gapdh' , 'Slc25a4' , 'Rad23a' , 'Ccl5' , 'H2.T23','Lcp1' , 'Lgmn' , 'Ddx5' , 'Dazap2' , 'Stat1' , 'Hnrnpk' , 'Tpm3' , 'Txndc17','Unc93b1' , 'Vrk1','Rps3' , 'Park7','Vim' , 'Oaz1','Atp5c1' , 'Trip11' , 'Hint1' , 'Rer1' , 'Chmp6','Cxcl9','Cxcl10','Ccl5', 'Ccl22','Ccl22','Il12b','Il12b','Irf3', 'Cd80', 'Cd86', 'Ifit3', 'Ifi209', 'Cxcl16' ,'Snap23','Lactb', 'Ly86','Tapbp','Cxcl9','Calr','Psma3','Psmb10','Icosl','Ube2k', 'Bcl2a1b', 'Ufm1','Rab14','Eif4a1','Psmd14', 'Lamtor2', 'Scimp','Ifit2','Irf1','Irf1','Irf1','Irf1','Irf1','Irf1','Irf1','Ikbkb','Ikbkb','Ikbkb','Ikbkb','Ikbkb','Ikbkb','Ikbkb')
+
+
+for (i in 1:length(clusters_vio))
+  {
+ 
+
+target <- "new_genotype"
+var1 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+target <- gene_vio[i]
+var2 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+violin_plot <- ggplot(get(paste0("metadata5_cluster", clusters_vio[i], sep="")), aes(factor(var1 ), var2)) 
+
+print(violin_plot + geom_violin(aes(fill = factor(var1)), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + labs(title =paste0("metadata5_cluster", clusters_vio[i], sep=""))+ylab(paste0("Expresion level of ", gene_vio[i], sep=""))  + ylim(0,10))
+}
+
+
+
+
+```
+
+Ccl5 violin plot only
+```{r}
+clusters_vio <- c(1)
+
+gene_vio <- c('Ccl5')
+
+
+for (i in 1:length(clusters_vio))
+  {
+ 
+
+target <- "new_genotype"
+var1 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+target <- gene_vio[i]
+var2 <- get(paste0("metadata5_cluster", clusters_vio[i], sep=""))[[target]]
+
+
+violin_plot <- ggplot(get(paste0("metadata5_cluster", clusters_vio[i], sep="")), aes(factor(var1 ), var2)) 
+
+print(violin_plot + geom_violin(aes(fill = factor(var1)), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + labs(title =paste0("metadata5_cluster", clusters_vio[i], sep=""))+ylab(paste0("Expresion level of ", gene_vio[i], sep="")))
+}
+```
+
+Cluster-independent violin plots
+```{r}
+
+gene_vio <- c('Ccl5', 'Ifitm2','Ifitm3','Bst2','Zbp1','Ifi27l2a','Cxcl9','Cxcl10','Aif1', 'Sept7', 'Irf5' , 'S100a6' , 'Fuca1' , 'Irf7' , 'Tmem258' , 'Pfdn5'  , 'Pfkp' , 'Plac8' , 'Ctsc' , 'Ctsh','Il12b','Psmb1', 'Tapbp', 'Rab14', 'Uggt1', 'Snap23', 'Slamf7',"Irf1","Ikbkb","Batf3","Irf8","Id2")
+
+
+
+for (i in 1:length(gene_vio))
+  {
+target <- gene_vio[i]
+
+
+violin_plot <- ggplot(metadata5, aes(factor(get("metadata5")[["new_genotype"]]), get("metadata5")[[target]]))
+   
+  print(violin_plot + geom_violin(aes(fill = factor(get("metadata5")[["new_genotype"]])), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme(axis.text.x = element_text(angle = 45, hjust = 1))+labs(title =paste0("Expression of ", gene_vio[i], sep="")) + ylim(0,10))
+
+  }
+
+```
+  
+
+# Plots on reviewers request
+```{r}
+gene_vio <- c("Irf1","Ikbkb","Batf3","Irf8","Id2")
+
+
+
+for (i in 1:length(gene_vio))
+  {
+target <- gene_vio[i]
+
+
+violin_plot <- ggplot(metadata5, aes(factor(get("metadata5")[["new_genotype"]]), get("metadata5")[[target]]))
+  
+print(violin_plot + geom_violin(aes(fill = factor(get("metadata5")[["new_genotype"]])), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme_classic()+labs(title =paste0("Expression of ", gene_vio[i], sep="")) + ylim(0,10))
+tiff(paste(gene_vio[i],"vln_plot_cluster_ind.tiff",sep=""), units="in", width=20, height=11, res=300) 
+  print(violin_plot + geom_violin(aes(fill = factor(get("metadata5")[["new_genotype"]])), scale="width", position="dodge") + geom_jitter(height = 0, width = 0.2, color="black", alpha=0.2) + theme_classic()+labs(title =paste0("Expression of ", gene_vio[i], sep="")) + ylim(0,10))
+  dev.off()
+  }
+
+```
+
+
+# enrichR analysis
+
+Loading libraries for enrichR analysis
+
+```{r}
+library(enrichR)
+dbs <- listEnrichrDbs()
+dbs <- c("GO_Biological_Process_2018", "KEGG_2019_Mouse", "Reactome_2016", "TRANSFAC_and_JASPAR_PWMs", "Transcription_Factor_PPIs")
+```
+
+
+
+Extracting DEGs independently of clusters Control vs Irf1_dXCR1 (p_val_adj < 0.25)
+
+```{r}
+DEGs <-  read.table("DGE_ControlVSIrf1_dXCR1_wo_M1_wo_conta.txt",sep=" ")
+DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta_filtered # Found only 13 genes
+DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta <- rownames(DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta_filtered)
+```
+
+Performing enrichr analysis independently of clusters Control vs Irf1_dXCR1 (p_val_adj < 0.25)
+```{r}
+
+enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta <- enrichr(DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta, dbs)
+
+
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta[["GO_Biological_Process_2018"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta[["KEGG_2019_Mouse"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta[["Reactome_2016"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta[["TRANSFAC_and_JASPAR_PWMs"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta[["Transcription_Factor_PPIs"]],10)
+
+
+
+Extracting DEGs independently of clusters Control vs Ikbkb_dXCR1 (p_val_adj < 0.25)
+```{r}
+DEGs <-  read.table("DGE_ControlVSIkbkb_dXCR1_wo_M1_wo_conta.txt",sep=" ")
+DEGs_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DEGs_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta_filtered # Found only 3 genes
+DEGs_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta <- rownames(DEGs_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta_filtered)
+
+```
+
+Performing enrichr analysis independently of clusters Control vs Ikbkb_dXCR1 (p_val_adj < 0.25)
+```{r}
+
+enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta <- enrichr(DEGs_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta, dbs)
+
+
+head(enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta[["GO_Biological_Process_2018"]],10)
+head(enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta[["KEGG_2019_Mouse"]],10)
+head(enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta[["Reactome_2016"]],10)
+head(enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta[["TRANSFAC_and_JASPAR_PWMs"]],10)
+head(enriched_DEGS_ctrl_vs_Ikbkb_dXCR1_wo_M1_wo_conta[["Transcription_Factor_PPIs"]],10)
+
+
+
+Extracting DEGs from clusters Control VS Irf1_dXCR1 (DEGs C0,DEGs C1,DEGs C2,DEGs C3,DEGs  C4,DEGs C5,DEGs C6)
+
+```{r}
+
+# C0
+
+DEGs <-  read.table("DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta_filtered
+DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta <- rownames(DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta_filtered)
+
+# C1
+
+DEGs <-  read.table("DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta_filtered
+DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta <- rownames(DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta_filtered)
+
+
+# C2
+
+
+DEGs <-  read.table("DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta_filtered
+DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta <- rownames(DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta_filtered)
+
+
+# C3
+
+
+DEGs <-  read.table("DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta_filtered
+DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta <- rownames(DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta_filtered)
+
+
+# C4
+
+
+DEGs <-  read.table("DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta_filtered
+DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta <- rownames(DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta_filtered)
+
+
+
+# C5
+
+
+DEGs <-  read.table("DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta_filtered
+DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta <- rownames(DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta_filtered)
+
+
+# C6
+
+
+DEGs <-  read.table("DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta.txt",sep=" ")
+DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta_filtered <- DEGs[which(DEGs$p_val_adj < 0.25 ),]
+DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta_filtered
+DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta <- rownames(DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta_filtered)
+```
+
+Union of  DEGs for Control vs Irf1_dXCR1 (DEGs iresspective of clusters + DEGs C0 + DEGs C1 + DEGs C2 + DEGs C3 + DEGs C4 + DEGs C5 + DEGs C6)
+
+```{r}
+control_vs_Irf1_dXCR1_all_DEGS <-Reduce(union, c(DEGs_ctrl_vs_Irf1_dXCR1_wo_M1_wo_conta,DGE_Control_C0_VS_Irf1_dXCR1_C0_wo_M1_wo_conta,DGE_Control_C1_VS_Irf1_dXCR1_C1_wo_M1_wo_conta,DGE_Control_C2_VS_Irf1_dXCR1_C2_wo_M1_wo_conta,DGE_Control_C3_VS_Irf1_dXCR1_C3_wo_M1_wo_conta,DGE_Control_C4_VS_Irf1_dXCR1_C4_wo_M1_wo_conta
+,DGE_Control_C5_VS_Irf1_dXCR1_C5_wo_M1_wo_conta,DGE_Control_C6_VS_Irf1_dXCR1_C6_wo_M1_wo_conta))
+```
+
+
+Performing the enrichR analysis for DEGs from Control vs Irf1_dXCR1 (DEGs irrespective of clusters + DEGs C0 + DEGs C1 + DEGs C2 + DEGs C3 + DEGs C4 + DEGs C5 + DEGs C6)
+
+```{r}
+enriched_DEGS_ctrl_vs_Irf1_dXCR1 <- enrichr(control_vs_Irf1_dXCR1_all_DEGS, dbs)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1[["GO_Biological_Process_2018"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1[["KEGG_2019_Mouse"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1[["Reactome_2016"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1[["TRANSFAC_and_JASPAR_PWMs"]],10)
+head(enriched_DEGS_ctrl_vs_Irf1_dXCR1[["Transcription_Factor_PPIs"]],10)
+
+
+
+
+
+
+# Making plots for Irf1 and Ikbkb
+## Below subsets the seurat objects and make some tests to check if we have same number of cells and same amount of expression for genes Irf1 and Ikbkb
+```{r}
+Idents(norm.data2) <- metadata5$Genotype
+normdata_s_Irf1_dXCR1 <- subset(norm.data2, idents ="Irf1_dXCR1")
+length(rownames(metadata5[which(metadata5$Genotype =="Irf1_dXCR1" ),])) == length(Cells(normdata_s_Irf1_dXCR1))
+```
+
+# Object for expression of Irf1 and Ikbkb in Irf1_dXCR1
+```{r}
+norm_exp_Irf1_dXCR1 <- data.frame(t(data.frame(normdata_s_Irf1_dXCR1@assays$RNA@data)))
+write.table(norm_exp_Irf1_dXCR1,"norm_exp_Irf1_dXCR1.txt",quote = F)
+
+
+norm_exp_360_cells <- data.frame(t(data.frame(norm.data2@assays$RNA@data)))
+norm_exp_360_cells$Genotype <- metadata5$Genotype
+norm_exp_360_Irf1_dXCR1 <- norm_exp_360_cells[which(norm_exp_360_cells$Genotype =="Irf1_dXCR1" ),]
+write.table(norm_exp_360_Irf1_dXCR1,"norm_exp_360_Irf1_dXCR1.txt",quote = F)
+
+```
+
+# The expression of Irf1 and Ikbkb is same in both the subsetted object and the object from the whole dataset as shown below 
+# The number of the cells is also the same
+```{r}
+sum(norm_exp_360_Irf1_dXCR1$Irf1) == sum(norm_exp_Irf1_dXCR1$Irf1)
+sum(norm_exp_360_Irf1_dXCR1$Ikbkb) == sum(norm_exp_Irf1_dXCR1$Ikbkb)
+
+
+
+# The number of the cells is also the same
+normdata_s_Ikbkb_dXCR1 <- subset(norm.data2, idents ="Ikbkb_dXCR1")
+length(rownames(metadata5[which(metadata5$Genotype =="Ikbkb_dXCR1" ),])) == length(Cells(normdata_s_Ikbkb_dXCR1))
+```
+
+# Object for expression of Irf1 and Ikbkb in Ikbkb_dXCR1
+```{r}
+norm_exp_Ikbkb_dXCR1 <- data.frame(t(data.frame(normdata_s_Ikbkb_dXCR1@assays$RNA@data)))
+write.table(norm_exp_Ikbkb_dXCR1,"norm_exp_Ikbkb_dXCR1.txt",quote = F)
+
+norm_exp_360_cells <- data.frame(t(data.frame(norm.data2@assays$RNA@data)))
+norm_exp_360_cells$Genotype <- metadata5$Genotype
+norm_exp_360_Ikbkb_dXCR1 <- norm_exp_360_cells[which(norm_exp_360_cells$Genotype =="Ikbkb_dXCR1" ),]
+write.table(norm_exp_360_Ikbkb_dXCR1,"norm_exp_360_Ikbkb_dXCR1.txt",quote = F)
+
+```
+
+
+# The expression of Irf1 and Ikbkb is same in both the subsetted object and the object from the whole dataset as shown below 
+# The number of the cells is also the same
+```{r}
+sum(norm_exp_360_Ikbkb_dXCR1$Irf1) == sum(norm_exp_Ikbkb_dXCR1$Irf1)
+sum(norm_exp_360_Ikbkb_dXCR1$Ikbkb) == sum(norm_exp_Ikbkb_dXCR1$Ikbkb)
+
+
+# The number of the cells is also the same
+length(rownames(metadata5[which(metadata5$Genotype =="Ikbkb_dXCR1" ),])) == length(Cells(normdata_s_Ikbkb_dXCR1))
+```
+
+# Object for expression of Irf1 and Ikbkb in Control_FF
+```{r}
+metadata5$Genotype_n <- metadata5$Genotype 
+metadata5$Genotype_n <- gsub("Irf1_FF", "Control_FF", metadata5$Genotype)
+metadata5$Genotype_n <- gsub("Ikbkb_FF", "Control_FF", metadata5$Genotype)
+
+Idents(norm.data2) <- metadata5$Genotype_n
+normdata_s_Control_FF <- subset(norm.data2, idents ="Control_FF")
+length(rownames(metadata5[which(metadata5$Genotype_n =="Control_FF" ),])) == length(Cells(normdata_s_Control_FF))
+
+norm_exp_Control_FF <- data.frame(t(data.frame(normdata_s_Control_FF@assays$RNA@data)))
+write.table(norm_exp_Control_FF,"norm_exp_Control_FF.txt",quote = F)
+
+
+norm_exp_360_cells <- data.frame(t(data.frame(norm.data2@assays$RNA@data)))
+norm_exp_360_cells$Genotype <- metadata5$Genotype_n
+norm_exp_360_Control_FF <- norm_exp_360_cells[which(norm_exp_360_cells$Genotype =="Control_FF" ),]
+write.table(norm_exp_360_Control_FF,"norm_exp_360_Control_FF.txt",quote = F)
+
+```
+
+
+# # The expression of Irf1 and Ikbkb is same in both the subsetted object and the object from the whole dataset as shown below 
+# The number of the cells is also the same for control_FF as well
+```{r}
+sum(norm_exp_360_Control_FF$Irf1) == sum(norm_exp_Control_FF$Irf1)
+sum(norm_exp_360_Control_FF$Ikbkb) == sum(norm_exp_Control_FF$Ikbkb)
+
+
+# The number of the cells is also the same
+length(rownames(metadata5[which(metadata5$Genotype_n =="Control_FF" ),])) == length(Cells(normdata_s_Control_FF))
+
+dim(normdata_s_Irf1_dXCR1)
+dim(normdata_s_Ikbkb_dXCR1)
+dim(normdata_s_Control_FF)
+
+# Adding the clusters information to the objects for making the plots according to clusters
+Idents(normdata_s_Irf1_dXCR1) <-normdata_s_Irf1_dXCR1@meta.data$RNA_snn_res.0.6  
+Idents(normdata_s_Ikbkb_dXCR1) <- normdata_s_Ikbkb_dXCR1@meta.data$RNA_snn_res.0.6 
+Idents(normdata_s_Control_FF) <- normdata_s_Control_FF@meta.data$RNA_snn_res.0.6
+```
+
+# Making some tests to check for the cluster information 
+```{r}
+normdata_s_Control_FF@meta.data$RNA_snn_res.0.6 == normdata_s_Control_FF@meta.data$seurat_clusters
+
+normdata_s_Ikbkb_dXCR1@meta.data$RNA_snn_res.0.6 == normdata_s_Ikbkb_dXCR1@meta.data$seurat_clusters
+
+
+normdata_s_Irf1_dXCR1@meta.data$RNA_snn_res.0.6 == normdata_s_Irf1_dXCR1@meta.data$seurat_clusters
+
+```
+
+# Making and saving the plots for Irf1
+```{r} 
+p <- VlnPlot(normdata_s_Irf1_dXCR1,features = "Irf1",y.max = 10,cols= c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Irf1_dXCR1_Irf1.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+p <- VlnPlot(normdata_s_Ikbkb_dXCR1,features = "Irf1",y.max = 10, cols= c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Ikbkb_dXCR1_Irf1.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+p <- VlnPlot(normdata_s_Control_FF,features = "Irf1",y.max = 10 ,cols= c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Control_FF_Irf1.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+
+```
+
+
+# Making and saving the plots for Ikbkb
+```{r}
+p <- VlnPlot(normdata_s_Irf1_dXCR1,features = "Ikbkb", y.max = 10,cols = c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Irf1_dXCR1_Ikbkb.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+p <- VlnPlot(normdata_s_Ikbkb_dXCR1,features = "Ikbkb",y.max = 10,cols = c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Ikbkb_dXCR1_Ikbkb.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+p <- VlnPlot(normdata_s_Control_FF,features = "Ikbkb",y.max = 10,cols = c("#F8766D", "#C49A00", "#53B400" , "#00C094" , "#00B6EB", "#A58AFF" , "#FB61D7"))
+print(p)
+tiff("Control_FF_Ikbkb.tiff", units="in", width=20, height=11, res=300)
+print(p)
+dev.off()
+
+```
+ 
