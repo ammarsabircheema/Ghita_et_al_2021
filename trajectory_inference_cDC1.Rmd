@@ -1,0 +1,385 @@
+report_for_Monocle3_on_scRNAseq_Ghita_wo_M1_wo_conta_dataset
+Ammar Sabir Cheema
+28 may 2020
+# This R script is meant to analyze scRNAseq data using the Monocle3 R package. # It is inspired by the tutorial found here: # https://cole-trapnell-lab.github.io/monocle3/
+
+
+# Loading libraries
+```{r}
+library(monocle3)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+# Reading input files
+```{r}
+color_ordered=c("green", "darkorchid2", "darkorange", "cornflowerblue", "black", "red", "cadetblue1", "burlywood4", "deepskyblue", "gray", "coral4", "green4", "hotpink3", "darkseagreen", "darkslateblue", "lightblue", "lightgreen", "orange2")
+
+
+
+expression_matrix_ghita <- readRDS("norm_data2_wo_M1_wo_conta.rds")
+
+
+cell_metadata <- read.table("tSNE_UMAP_coordinates_ok_wo_M1_wo_conta.txt", sep="\t", header=T, row=1)
+
+gene_annot <- rownames(expression_matrix_ghita@assays$RNA@data)
+gene_annotation <- as.data.frame(gene_annot)
+row.names(gene_annotation) <- gene_annot
+colnames(gene_annotation) <- 'gene_short_name'
+head(gene_annotation)
+
+dim(expression_matrix_ghita@assays$RNA@data)
+dim(cell_metadata)
+dim(gene_annotation)
+```
+
+# Make the CDS object (cells in expression matrix and in cell_metadata MUST be in the same order)
+```{r}
+cds <- new_cell_data_set(expression_matrix_ghita@assays$RNA@data,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+```
+
+# Normalize and pre-process the data
+```{r}
+cds <- preprocess_cds(cds, num_dim = 30, norm_method="none", use_genes=NULL, scaling=TRUE)
+```
+# plot PC variance
+```{r}
+plot_pc_variance_explained(cds)
+```
+
+# Reduce dimensionality and visualize the cells
+```{r}
+cds <- reduce_dimension(cds, max_components=3, reduction_method="UMAP", umap.metric = "cosine", umap.min_dist = 0.8,
+                        umap.n_neighbors = 10, umap.fast_sgd = FALSE, preprocess_method = "PCA",
+                        umap.nn_method = "annoy")
+```
+
+# check some informations from the metadata file
+```{r}
+colData(cds)
+# check some genes
+```{r}
+plot_cells(cds, reduction_method = "UMAP", genes=c("Ifnb1", "Ccr7", "Yfp", "Xcr1"), cell_size = 0.95)
+```
+
+
+# Clusters from Seurat projected on the UMAP calculated by monocle
+```{r}
+plot_cells(cds, color_cells_by="clusters_res0.6", label_cell_groups=FALSE, cell_size = 0.95)
+```
+
+
+# perform a clustering:
+```{r}
+cds = cluster_cells(cds, resolution=2e-2, reduction_method = "UMAP", k = 15, cluster_method = c("leiden"),
+                    num_iter = 2, partition_qval = 0.05, weight = FALSE, random_seed = 8)
+
+```
+
+# identify gene modules that are differentially expressed in different subsets of cells
+# Plotting these modules’ aggregate expression values reveals which cells express which modules.
+```{r}
+plot_cells(cds, genes=gene_module_df, reduction_method = "UMAP",  cell_size = 0.85, 
+           show_trajectory_graph=FALSE, 
+           label_cell_groups=FALSE)
+```
+
+# Learn the trajectory graph: The black lines show the structure of the graph.
+```{r}
+cds <- learn_graph(cds, use_partition = TRUE, learn_graph_control = list(minimal_branch_len = 5)) # here, I tested various parameters, including euclidean_distance_ratio and geodesic_distance_ratio with different values, but these distances seem not to have any impact on the final figure. 
+plot_cells(cds, reduction_method = "UMAP",  cell_size = 0.95, 
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=TRUE,
+           label_branch_points=FALSE,
+           graph_label_size=2
+           )
+```
+
+# identify gene modules that are differentially expressed in different subsets of cells
+# Plotting these modules’ aggregate expression values reveals which cells express which modules.
+```{r}
+plot_cells(cds, genes=gene_module_df, reduction_method = "UMAP",  cell_size = 0.85, 
+           show_trajectory_graph=FALSE, 
+           label_cell_groups=FALSE)
+```
+
+# Learn the trajectory graph: The black lines show the structure of the graph.
+```{r}
+cds <- learn_graph(cds, use_partition = TRUE, learn_graph_control = list(minimal_branch_len = 5)) # here, I tested various parameters, including euclidean_distance_ratio and geodesic_distance_ratio with different values, but these distances seem not to have any impact on the final figure. 
+plot_cells(cds, reduction_method = "UMAP",  cell_size = 0.95, 
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=TRUE,
+           label_branch_points=FALSE,
+           graph_label_size=2
+           )
+```
+
+# Now I will change the UMAP coordinates and clusters by those obtained by Seurat v3:
+# replace UMAP coordinates calculated by Monocle3 with UMAP coordinates calculated by Seurat v3.
+
+```{r}
+head(cds@int_colData@listData$reducedDims$UMAP[,1],n=20)
+
+cds@int_colData@listData$reducedDims$UMAP[,1] <- cell_metadata$UMAP_1
+cds@int_colData@listData$reducedDims$UMAP[,2] <- cell_metadata$UMAP_2
+#cds@int_colData@listData$reducedDims$UMAP[,3] <- UMAP_and_clusters_TPVM_Seurat3$UMAP_3
+plot cells on UMAP calculated by Seurat 3.
+plot_cells(cds, reduction_method = "UMAP", color_cells_by="clusters_res0.6", cell_size = 0.95, group_label_size = 4, show_trajectory_graph = FALSE)
+```
+
+# check some genes
+```{r}
+plot_cells(cds, reduction_method = "UMAP", genes=c("Ifnb1", "Ccr7", "Yfp", "Xcr1"), cell_size = 0.95, show_trajectory_graph = FALSE)
+```
+
+# Plotting genes on UMAP calculated by mononcle
+```{r}
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Ccl3"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=2, y=3, reduction_method = "UMAP", genes=c("Clec9a"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Xcr1"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=2, y=3, reduction_method = "UMAP", genes=c("Xcr1"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Il12b"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=2, y=3, reduction_method = "UMAP", genes=c("Il12b"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Ccr7"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Cadm1"), cell_size = 1.95, show_trajectory_graph = FALSE)
+
+
+plot_cells(cds, x=1, y=2, reduction_method = "UMAP", genes=c("Ccl5"), cell_size = 1.95, show_trajectory_graph = FALSE)
+```
+
+# Plot according to genotype
+
+```{r}
+plot_cells(cds, color_cells_by="Genotype", label_cell_groups=FALSE, cell_size = 0.95, show_trajectory_graph = FALSE)
+```
+
+# replace clusters calculated by Monocle3 by clusters calculated by Seurat 3
+
+```{r}
+clusters_Seurat3 <- as.matrix(cell_metadata[,c(1,9)])
+clusters_Seurat3 <- clusters_Seurat3[,-1]
+
+clusters_Seurat3 <- as.factor(clusters_Seurat3)
+cds@clusters$UMAP$clusters <- clusters_Seurat3
+
+plot_cells(cds, reduction_method = "UMAP", cell_size = 0.95, group_label_size = 4, color_cells_by="cluster", show_trajectory_graph = FALSE)
+```
+
+# identify gene modules that are differentially expressed in different subsets of cells
+# Plotting these modules’ aggregate expression values reveals which cells express which modules.
+```{r}
+plot_cells(cds, genes=gene_module_df, reduction_method = "UMAP",  cell_size = 0.85, 
+           show_trajectory_graph=FALSE, 
+           label_cell_groups=FALSE)
+```
+
+# show data of cds:
+
+head(pData(cds))
+
+# Learn the trajectory graph: The black lines show the structure of the graph.
+
+```{r}
+cds <- learn_graph(cds, use_partition = TRUE, learn_graph_control = list(minimal_branch_len = 10)) # here, I tested various parameters, including euclidean_distance_ratio and geodesic_distance_ratio with different values, but these distances seem not to have any impact on the final figure. 
+plot_cells(cds, reduction_method = "UMAP",  cell_size = 0.95, 
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=4
+           )
+```
+
+# Part 1
+# I defined cells from cluster 5 to be the root cells.
+```{r}
+cells_from_cluster_5 <- rownames(cell_metadata[which(cell_metadata$clusters_res0.6 == "C5"), ])
+                  
+cds <- order_cells(cds, reduction_method = "UMAP",  root_cells = cells_from_cluster_5)
+```
+
+# Plot of the cells with color according to pseudotime (different view angles, combining UMAP1, 2 and 3)
+```{r}
+plot_cells(cds, x=1, y=2, 
+           reduction_method = "UMAP",  cell_size = 1.5, 
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=4,
+           trajectory_graph_color = "green",
+           trajectory_graph_segment_size = 1.05,
+           label_roots = FALSE)
+
+
+plot_cells(cds, x=1, y=3, 
+            reduction_method = "UMAP",  cell_size = 1.5, 
+            color_cells_by = "pseudotime",
+            label_cell_groups=FALSE,
+            label_leaves=FALSE,
+            label_branch_points=FALSE,
+            graph_label_size=4,
+            trajectory_graph_color = "green",
+            trajectory_graph_segment_size = 1.05,
+            label_roots = FALSE)
+
+
+plot_cells(cds, x=2, y=3, 
+            reduction_method = "UMAP",  cell_size = 1.5, 
+            color_cells_by = "pseudotime",
+            label_cell_groups=FALSE,
+            label_leaves=FALSE,
+            label_branch_points=FALSE,
+            graph_label_size=4,
+            trajectory_graph_color = "green",
+            trajectory_graph_segment_size = 1.05,
+            label_roots = FALSE)
+```
+
+
+# Plotting some genes of interest, on the pseudotime axis where cluster 5 is used as root
+```{r}
+spec_genes <- c( "Ccr7","Il12b","Fscn1", "Fas", "Cd40", "Cd80","Xcr1", "Clec9a", "Cadm1","Ccl5","Irf1","Ikbkb")
+marker_names <- row.names(subset(fData(cds), gene_short_name %in% spec_genes))
+spec_genes_cds <- cds[rowData(cds)$gene_short_name %in% spec_genes,]
+
+plot_genes_in_pseudotime(spec_genes_cds, cell_size = 0.95, nrow = NULL, ncol = 2,                    color_cells_by="pseudotime",                       min_expr=0.5)
+```
+
+
+# Extracting pseudotime values for floxed and mutant cells where C5 is root
+```{r}
+pseudotime_wo_M1_wo_conta_C5_root_seurat <- read.table("pseudotime_ghita_wo_M1_wo_conta_dataset_UMAP_coord_and_clusters_C5_as_root_Seurat3.txt",row=1)
+rownames(pseudotime_wo_M1_wo_conta_C5_root_seurat) <- paste("X",rownames(pseudotime_wo_M1_wo_conta_C5_root_seurat),sep="")
+cells_only_floxed <- read.table("pseudotime_ghita_wo_Irf1_dXCR1_wo_Ikbkb_dXCR1_dataset_UMAP_coord_and_clusters_C3_as_root_Seurat3.txt",row=1)
+cells_only_mutant <- read.table("pseudotime_ghita_w_Irf1_dXCR1_w_Ikbkb_dXCR1_dataset_UMAP_coord_and_clusters_C5_as_root_Seurat3.txt",row=1)
+dim(pseudotime_wo_M1_wo_conta_C5_root_seurat)
+dim(cells_only_floxed)
+dim(cells_only_mutant)
+
+
+# Find and extract rows in reference data.frame
+cells_only_floxedResult = pseudotime_wo_M1_wo_conta_C5_root_seurat[match( rownames(cells_only_floxed), rownames(pseudotime_wo_M1_wo_conta_C5_root_seurat)), 1, drop = FALSE]
+cells_only_mutantResult = pseudotime_wo_M1_wo_conta_C5_root_seurat[match( rownames(cells_only_mutant), rownames(pseudotime_wo_M1_wo_conta_C5_root_seurat)), 1, drop = FALSE]
+
+# Merge results
+result = merge(cells_only_floxedResult, cells_only_mutantResult, by = 0, all = TRUE)
+# Put back merge reference (rownames) as actual row names
+rownames(result) = result[["Row.names"]]
+# Remove the useless "Row.names" column
+result = result[-1]
+colnames(result) <- c("cells_only_floxed","cells_only_mutant")
+Plotting pseudotime for floxed cells where C5 is root
+plot_genes_in_pseudotime( cds[marker_names, !is.na(result[, 'cells_only_floxed'])], color_cells_by="pseudotime", nrow = NULL, ncol = 2, min_expr=0.5)
+```
+
+Plotting pseudotime for mutant cells where C5 is root
+```{r}
+plot_genes_in_pseudotime( cds[marker_names, !is.na(result[, 'cells_only_mutant'])], color_cells_by="pseudotime", nrow = NULL, ncol = 2, min_expr=0.5)
+```
+
+# Part 2
+# I defined cells from cluster 3 to be the root cells.
+```{r}
+cells_from_cluster_3 <- rownames(cell_metadata[which(cell_metadata$clusters_res0.6 == "C3"), ])
+                  
+cds <- order_cells(cds, reduction_method = "UMAP",  root_cells = cells_from_cluster_3)
+```
+# Extracting pseudotime values for floxed and mutant cells where C3 is root
+```{r}
+pseudotime_wo_M1_wo_conta_C3_root_seurat <- read.table("pseudotime_ghita_wo_M1_wo_conta_dataset_UMAP_coord_and_clusters_C3_as_root_Seurat3.txt",row=1)
+rownames(pseudotime_wo_M1_wo_conta_C3_root_seurat) <- paste("X",rownames(pseudotime_wo_M1_wo_conta_C3_root_seurat),sep="")
+cells_only_floxed <- read.table("pseudotime_ghita_wo_Irf1_dXCR1_wo_Ikbkb_dXCR1_dataset_UMAP_coord_and_clusters_C3_as_root_Seurat3.txt",row=1)
+cells_only_mutant <- read.table("pseudotime_ghita_w_Irf1_dXCR1_w_Ikbkb_dXCR1_dataset_UMAP_coord_and_clusters_C3_as_root_Seurat3.txt",row=1)
+dim(pseudotime_wo_M1_wo_conta_C3_root_seurat)
+dim(cells_only_floxed)
+dim(cells_only_mutant)
+
+# Find and extract rows in reference data.frame
+cells_only_floxedResult = pseudotime_wo_M1_wo_conta_C3_root_seurat[match( rownames(cells_only_floxed), rownames(pseudotime_wo_M1_wo_conta_C3_root_seurat)), 1, drop = FALSE]
+cells_only_mutantResult = pseudotime_wo_M1_wo_conta_C3_root_seurat[match( rownames(cells_only_mutant), rownames(pseudotime_wo_M1_wo_conta_C3_root_seurat)), 1, drop = FALSE]
+
+# Merge results
+result = merge(cells_only_floxedResult, cells_only_mutantResult, by = 0, all = TRUE)
+# Put back merge reference (rownames) as actual row names
+rownames(result) = result[["Row.names"]]
+# Remove the useless "Row.names" column
+result = result[-1]
+colnames(result) <- c("cells_only_floxed","cells_only_mutant")
+Plotting pseudotime for floxed cells where C3 is root
+plot_genes_in_pseudotime( cds[marker_names, !is.na(result[, 'cells_only_floxed'])], color_cells_by="pseudotime", nrow = NULL, ncol = 2, min_expr=0.5)
+```
+
+# Plotting pseudotime for mutant cells where C3 is root
+```{r}
+plot_genes_in_pseudotime( cds[marker_names, !is.na(result[, 'cells_only_mutant'])], color_cells_by="pseudotime", nrow = NULL, ncol = 2, min_expr=0.5)
+```
+
+# Plot of the cells with color according to pseudotime (different view angles, combining UMAP1, 2 and 3)
+```{r}
+plot_cells(cds, x=1, y=2, 
+           reduction_method = "UMAP",  cell_size = 1.5, 
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=4,
+           trajectory_graph_color = "green",
+           trajectory_graph_segment_size = 1.05,
+           label_roots = FALSE)
+
+
+plot_cells(cds, x=1, y=3, 
+            reduction_method = "UMAP",  cell_size = 1.5, 
+            color_cells_by = "pseudotime",
+            label_cell_groups=FALSE,
+            label_leaves=FALSE,
+            label_branch_points=FALSE,
+            graph_label_size=4,
+            trajectory_graph_color = "green",
+            trajectory_graph_segment_size = 1.05,
+            label_roots = FALSE)
+
+
+plot_cells(cds, x=2, y=3, 
+            reduction_method = "UMAP",  cell_size = 1.5, 
+            color_cells_by = "pseudotime",
+            label_cell_groups=FALSE,
+            label_leaves=FALSE,
+            label_branch_points=FALSE,
+            graph_label_size=4,
+            trajectory_graph_color = "green",
+            trajectory_graph_segment_size = 1.05,
+            label_roots = FALSE)
+```
+
+
+Plotting some genes of interest, on the pseudotime axis
+
+```{r}
+spec_genes <- c( "Ccr7","Il12b","Fscn1", "Fas", "Cd40", "Cd80","Xcr1", "Clec9a", "Cadm1","Ccl5","Irf1","Ikbkb")
+marker_names <- row.names(subset(fData(cds), gene_short_name %in% spec_genes))
+spec_genes_cds <- cds[rowData(cds)$gene_short_name %in% spec_genes,]
+
+plot_genes_in_pseudotime(spec_genes_cds, cell_size = 0.95, nrow = NULL, ncol = 2, color_cells_by="pseudotime", min_expr=0.5)
+
+
