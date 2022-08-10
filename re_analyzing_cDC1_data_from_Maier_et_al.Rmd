@@ -1,0 +1,870 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+ 
+# starting files: gene counts . (UMI have been treated)
+
+---
+title: "R script for analysis of Merad's data"
+author: "Ammar Sabir Cheema"
+date: "21/04/2021"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+# loading libraries:
+```{r load libraries}
+library(Seurat)
+library(dplyr)
+
+```
+
+
+# Reading input files
+```{r}
+#setwd("/home/cheemaa/workspace/mine")
+y1 <- read.table("GSM3832735_wt_naive_gex.csv", sep=",", header=T,row.names=1)
+dim(y1)
+head(names(y1))
+
+y2 <- read.table("GSM3832737_wt_tumor_gex.csv", sep=",", header=T,row.names=1)
+dim(y2)
+head(names(y2))
+
+
+
+
+ setdiff(rownames(y1),rownames(y2))
+ table(rownames(y1)==rownames(y2))
+
+
+ head(rownames(y1))
+ tail(rownames(y1))
+ head(rownames(y2))
+ tail(rownames(y2))
+
+
+y3 <- merge(y1, y2, by=0, all=TRUE)
+y <- y3[,-1]
+rownames(y) <- y3[,1]
+
+dim(y)
+```
+
+
+# Reading metadata
+```{r}
+sampleinfo1=read.delim("GSM3832736_wt_naive_adt.csv",sep=",", header=T, row.names=1)
+sampleinfo1 <- as.data.frame(t(sampleinfo1))
+sampleinfo1$type <- rep("naïve", time=nrow(sampleinfo1))
+sampleinfo1 <- t(sampleinfo1)
+head(colnames(sampleinfo1))
+dim(sampleinfo1)
+
+sampleinfo2=read.delim("GSM3832738_wt_tumor_adt.csv",sep=",", header=T, row.names=1)
+sampleinfo2 <- as.data.frame(t(sampleinfo2))
+sampleinfo2$type <- rep("tumor", time=nrow(sampleinfo2))
+sampleinfo2 <- t(sampleinfo2)
+head(colnames(sampleinfo2))
+dim(sampleinfo2)
+
+
+
+
+sampleinfo3 <- merge(sampleinfo1, sampleinfo2, by=0, all=TRUE)
+sampleinfo4 <- sampleinfo3[,-1]
+rownames(sampleinfo4) <- sampleinfo3[,1]
+
+sampleinfo  <-	  as.data.frame(t(sampleinfo4))
+rownames(sampleinfo) <- colnames(sampleinfo4)
+
+metadata = sampleinfo[rownames(sampleinfo) %in% colnames(y), , drop=F]
+all(colnames(y)==rownames(metadata))
+
+```
+
+
+# Part 1: all cells from naive and tumor
+# Create Seurat object
+```{r}
+y_seurat <- CreateSeuratObject(y, min.cells = 5, min.features = 600, project = "Merad")
+#table(y_seurat@meta.data$orig.ident) 
+dim(y_seurat@assays$RNA)
+```
+
+
+# Some Quality Checks
+```{r}
+VlnPlot(object = y_seurat, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat@meta.data$nCount_RNA)
+hist(y_seurat@meta.data$nFeature_RNA)
+metadata1 = metadata[rownames(metadata) %in% colnames(y_seurat), , drop=F]
+write.table(metadata1, "metadata1_merad_sc_data.txt", sep="\t", quote=F)
+dim(metadata1)
+head(metadata1)
+
+
+df_counts <- as.data.frame(y_seurat@meta.data$nCount_RNA)
+df_counts$APC.IH <- metadata1$APC.IH
+df_counts$CD11b.IH <- metadata1$CD11b.IH
+df_counts$CD11c.IHM <- metadata1$CD11c.IHM
+df_counts$I.A.I.E.IHM <- metadata1$I.A.I.E.IHM
+df_counts$PE.IH <- metadata1$PE.IH
+df_counts$type <- metadata1$type
+df_counts$id <- rownames(metadata1) # these are cells (id)
+
+
+
+# histogram number of reads, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat@meta.data$nCount_RNA, fill=as.factor(metadata1$type))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+```
+
+
+
+Percentage of mitochondrial genes 
+```{r}
+
+mito.genes <- grep("^mt", rownames(y_seurat@assays$RNA), value=T)
+mito.genes
+y_seurat[["percent.mt"]] <- PercentageFeatureSet(y_seurat, pattern = "^mt")
+
+
+VlnPlot(y_seurat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+
+
+percent.mito <- Matrix::colSums(y_seurat@assays$RNA@data[mito.genes, ])/Matrix::colSums(y_seurat@assays$RNA@data)
+
+y_seurat <- AddMetaData(y_seurat, percent.mito, "percent.mito")
+
+# This histogram shows the expression ratio of distribution of mitochondrial genes
+hist(y_seurat@meta.data$percent.mito, breaks=seq(from=0,to=1,by=0.01),xlab="Mitochondrial gene expression ratio", main="Distribution of the mitochondrial gene expression ratio")
+
+
+max(y_seurat@meta.data$percent.mito) < 0.1
+```
+
+FeatureScatter makes a scatter plot of two features 
+```{r}
+plot1 <- FeatureScatter(y_seurat, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(y_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+#CombinePlots(plots = list(plot1, plot2))
+
+plot1
+plot2
+```
+
+Plot3 and plot4 are similar to plot1 and plot2 but just axis are changed
+```{r}
+
+plot3 <- FeatureScatter(y_seurat, feature1 = "nFeature_RNA", feature2 = "percent.mt")
+plot4 <- FeatureScatter(y_seurat, feature1 = "nFeature_RNA", feature2 = "nCount_RNA")
+#CombinePlots(plots = list(plot3, plot4))
+plot3
+plot4
+```
+
+
+# Subsetting seurat object
+```{r}
+
+
+y1_seurat <- subset(y_seurat, subset = nFeature_RNA > 550 & nFeature_RNA < 10000 & percent.mt < 10)
+dim(y1_seurat)
+
+```
+
+Extracting metadata according to subsetted seurat object
+
+```{r}
+metadata2 = metadata1[rownames(metadata1) %in% colnames(y1_seurat), , drop=F]
+```
+
+
+# Normalization
+After subsetting the data we apply the log normalization so that we have a common scale of values
+LogNormalize: Feature counts for each cell are divided by the total counts for that cell and multiplied by the scale.factor. This is then natural-log transformed using log1p.
+
+```{r}
+norm.data <- NormalizeData(object = y1_seurat, normalization.method = "LogNormalize", scale.factor = 1e6)
+write.table(norm.data@assays$RNA@data, "log_norm_merad_sc_data.txt", sep="\t", quote=F)
+
+#norm.data_RC <- NormalizeData(y_seurat, verbose = FALSE, normalization.method = "RC", scale.factor = 1e6)
+
+#write.table(norm.data@assays$RNA@data, "linear_norm_data_scapin_time_course_PM_protoc.txt", sep="\t", quote=F)
+
+
+### This dimension is same as the dimension of data shown above
+dim(norm.data@assays$RNA@data)
+```
+
+
+Identification of highly variable features (feature selection)
+Here we identify 1000 most variable features and plot 40 of them on the plot shown below
+Detect features that are variable on a feature plot
+```{r}
+
+norm.data <- FindVariableFeatures(object=norm.data, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+
+# Identify the 40 most highly variable genes
+top40 <- head(VariableFeatures(norm.data), 40)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(norm.data)
+
+# In plot2 we label the plot1 with top40 variable genes we have detected above
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+
+
+
+plot2
+
+all.genes <- rownames(norm.data)
+norm.data <- ScaleData(norm.data, features = all.genes)
+#write.table(norm.data@assays$RNA@scale.data, "log_norm_scaled_data_scapin_time_course_PM_protoc.txt", sep="\t", quote=F)
+```
+
+# Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data <- RunPCA(norm.data, npcs = 30, features = VariableFeatures(object = norm.data))
+norm.data <- RunICA(norm.data, nics = 30, features = VariableFeatures(object = norm.data))
+```
+
+
+
+Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+pca_coordinates <- norm.data@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+Heatmap: 
+```{r}
+DimHeatmap(norm.data, dims = 1, cells = 4618, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data, dims = 2, cells = 4618, balanced = TRUE)
+DimHeatmap(norm.data, dims = 1:9, cells = 4618, balanced = TRUE)
+```
+
+
+Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data))
+head(Cells(norm.data))
+head(rownames(x = norm.data))
+ncol(x = norm.data)
+nrow(x = norm.data)
+```
+
+
+# Determine the ‘dimensionality’ of the dataset
+From the plot shown below it is clear that first seven principle components are responsible for most of the variability
+```{r}
+norm.data <- JackStraw(norm.data, num.replicate = 100)
+norm.data <- ScoreJackStraw(norm.data, dims = 1:20)
+
+JackStrawPlot(norm.data, dims = 1:15)
+
+ElbowPlot(norm.data)
+```
+
+# Clustering the cells
+We tried several resolutions for calculating clusters but found 0.3 to be best based on the number of clusters
+```{r}
+norm.data <- FindNeighbors(norm.data, reduction = "pca", dims = 1:7, k.param=9, compute.SNN=TRUE, force.recalc=TRUE)
+
+norm.data <- FindClusters(norm.data, resolution = 0.3, algorithm=1, random.seed=0)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(norm.data), 5)
+
+
+clusters_res0.3 <- norm.data$RNA_snn_res.0.3
+write.table(clusters_res0.3, "clusters_res0.3_merad_sc_data.txt", sep="\t", quote=F)
+norm.data <- RunUMAP(norm.data, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data, reduction = "umap", pt.size=1)
+```
+
+Extracting coordinates for UMAP
+
+```{r}
+UMAP_coord <- norm.data@reductions$umap@cell.embeddings
+write.table(UMAP_coord, "UMAP_coordinates_merad_sc_data.txt", sep="\t", quote=F)
+```
+
+
+# Feature plots showing expression of genes
+First list of feature plots
+```{r}
+
+gene_list <- c("Ccr7", "Fscn1", "Cd40", "Pdcd1lg2", "Cd200", "Fas", "Il4ra", "Relb", "Xcr1", "Clec9a", "Cadm1", "Naaa", "Sirpa","Myd88", "Ticam1" , "Tlr3", "Tlr2","Aldh1a2","Il4i1", "Cd209a" ,"H2-DMb2" ,"Itgam","Cd80", "Cd86", "Cd83","Cd274", "Socs1", "Socs2", "Myo1g", "Cxcl16", "Adam8", "Icam1",  "Marcks", "Marcksl1","Tlr8","Tlr7", "Tlr6", "Tlr5","Tlr4","Tlr11")
+
+
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap"))
+}
+
+```
+
+
+
+
+Second list of feature plots
+```{r}
+# Not found "Ifna1",,"Ifnb1","Ms4a4","Cd3e","Gpr141b"
+gene_list <- c("C1qb","C1qc","C1qa","Cebpb","C3ar1","Fcer1g","Clec4n","Lilrb4a","F10","Lilr4b","Cebpa","Ly6c1","Il12b","Ccl5","Ccl3","Tnf","Cxcl12","Cd2","Batf3","Tcf4","Mx1","Oasl1","Nr4a1")
+
+
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap"))
+}
+
+
+gene_list <- c("Xcr1", "Cadm1", "Gpr33", "Il12b", "Ncoa7", "Irf8", "Ms4a4c", "Ifitm3", "Cd63", "Tmem176a", "Tmem176b", "Ccr7", "Fscn1", "Mreg")
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data, features = gene_list[i],reduction = "umap"))
+}
+
+```
+
+
+# extract markers for the clusters, and show some of them:
+```{r extract markers for the clusters norm.data}
+for(i in 0:11) {
+assign(paste("cluster", i,".markers", sep = ""), FindMarkers(norm.data, ident.1 = i, logfc.threshold = 1, test.use = "bimod", only.pos = TRUE))
+  print(paste("cluster", i,".markers", sep = ""))
+  print(head(get(paste("cluster", i,".markers", sep = "")),n=20))
+  write.table(get(paste("cluster", i,".markers", sep = "")),paste("cluster", i,".markers_merad_sc_data.txt", sep = ""),row.names = TRUE)
+  }
+```
+
+# Part 2: removed some contaminants (mono/macro, pDC...) and kept cDC1, mregDC and cDC2
+# Removing contaminants
+```{r}
+contaminants <- rownames(tSNE_UMAP_coordinates_ok[which(tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C2" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C3" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C6" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C10" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C11"),])
+length(contaminants)
+
+write.table(contaminants, "contaminants_merad_sc_data.txt", sep="\n", quote=F, col.names=F, row.names=F)
+
+dim(metadata2)
+cells_wo_conta <- setdiff(rownames(metadata2), contaminants)
+length(cells_wo_conta)
+metadata3 <- metadata2[rownames(metadata2) %in% cells_wo_conta, , drop=F]
+write.table(metadata3, "metadata3_merad_sc_data_wo_conta.txt", sep="\t", quote=F)
+
+dim(metadata3)
+y2 <- as.data.frame(t(y))
+y3 = y2[rownames(y2) %in% rownames(metadata3), ,drop=F]
+y4 <- as.data.frame(t(y3))
+rm(y3, y2, metadata2, norm.data, plot1, plot2, tSNE_coordinates, UMAP_coordinates, tSNE_UMAP_coordinates_ok)
+```
+
+
+# Now, restart with Seurat2, generate the Seurat object
+```{r}
+
+y_seurat2 <- CreateSeuratObject(y4, min.cells = 7, min.features = 600, project = "Merad_sc_data")
+dim(y_seurat2)
+```
+
+# Now, subset Seurat2
+```{r}
+y_seurat2 <- subset(y_seurat2, subset = nFeature_RNA > 400 & nFeature_RNA < 10000)
+dim(y_seurat2)
+```
+
+
+# Some Quality Checks
+```{r}
+VlnPlot(object = y_seurat2, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat2@meta.data$nCount_RNA)
+hist(y_seurat2@meta.data$nFeature_RNA)
+metadata4 = metadata3[rownames(metadata3) %in% colnames(y_seurat2), , drop=F]
+write.table(metadata4, "metadata4_merad_sc_data_wo_conta.txt", sep="\t", quote=F)
+dim(metadata4)
+head(metadata4)
+
+
+df_counts <- as.data.frame(y_seurat2@meta.data$nCount_RNA)
+df_counts$APC.IH <- metadata4$APC.IH
+df_counts$CD11b.IH <- metadata4$CD11b.IH
+df_counts$CD11c.IHM <- metadata4$CD11c.IHM
+df_counts$I.A.I.E.IHM <- metadata4$I.A.I.E.IHM
+df_counts$PE.IH <- metadata4$PE.IH
+df_counts$type <- metadata4$type
+df_counts$id <- rownames(metadata4) # these are cells (id)
+
+
+
+# histogram number of reads, according to plate
+ggplot(df_counts, aes(x=id, y=y_seurat2@meta.data$nCount_RNA, fill=as.factor(metadata4$type))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+
+```
+
+
+
+# Normalizing the data
+```{r}
+norm.data2 <- NormalizeData(object = y_seurat2, normalization.method = "LogNormalize", scale.factor = 1e6)
+
+write.table(norm.data2@assays$RNA@data, "log_norm_filtered_data_wo_conta_merad_sc_data.txt", sep="\t", quote=F)
+
+
+```
+
+
+# Finding variable features
+```{r}
+
+norm.data2 <- FindVariableFeatures(object=norm.data2, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+
+# Identify the 40 most highly variable genes
+top40 <- head(VariableFeatures(norm.data2), 40)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(norm.data2)
+
+# In plot2 we label the plot1 with top40 variable genes we have detected above
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+
+
+
+plot2
+
+
+all.genes <- rownames(norm.data2)
+norm.data2 <- ScaleData(norm.data2, features = all.genes)
+
+```
+
+# Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data2 <- RunPCA(norm.data2, npcs = 30, features = VariableFeatures(object = norm.data2))
+norm.data2 <- RunICA(norm.data2, nics = 30, features = VariableFeatures(object = norm.data2))
+```
+
+
+
+Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data2[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data2[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data2, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data2, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data2, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data2, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data2, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+pca_coordinates <- norm.data2@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data2@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+Heatmap: 
+```{r}
+DimHeatmap(norm.data2, dims = 1, cells = 3068, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data2, dims = 2, cells = 3068, balanced = TRUE)
+DimHeatmap(norm.data2, dims = 1:9, cells = 3068, balanced = TRUE)
+```
+
+
+Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data2))
+head(Cells(norm.data2))
+head(rownames(x = norm.data2))
+ncol(x = norm.data2)
+nrow(x = norm.data2)
+```
+
+
+# Determine the ‘dimensionality’ of the dataset
+From the plot shown below it is clear that first seven principle components are responsible for most of the variability
+```{r}
+norm.data2 <- JackStraw(norm.data2, num.replicate = 100)
+norm.data2 <- ScoreJackStraw(norm.data2, dims = 1:20)
+
+JackStrawPlot(norm.data2, dims = 1:15)
+
+ElbowPlot(norm.data2)
+```
+
+# Clustering the cells
+We tried several resolutions for calculating clusters but found 0.3 to be best based on the number of clusters
+```{r}
+norm.data2 <- FindNeighbors(norm.data2, reduction = "pca", dims = 1:7, k.param=9, compute.SNN=TRUE, force.recalc=TRUE)
+
+
+norm.data2 <- RunUMAP(norm.data2, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data2, reduction = "umap", pt.size=1)
+
+
+norm.data2 <- FindClusters(norm.data2, resolution = 0.3, algorithm=1, random.seed=0)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(norm.data2), 5)
+
+clusters_res0.3 <- norm.data2$RNA_snn_res.0.3
+write.table(clusters_res0.3, "clusters_res0.3_merad_sc_data_wo_conta.txt", sep="\t", quote=F)
+norm.data2 <- RunUMAP(norm.data2, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data2, reduction = "umap", pt.size=1)
+
+
+
+
+
+
+norm.data2 <- RunUMAP(norm.data2, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data2, reduction = "umap", pt.size=1)
+
+
+```
+
+
+
+# Feature plots showing expression of genes
+First list of feature plots
+```{r}
+# Not found Tlr8
+gene_list <- c("Ccr7", "Fscn1", "Cd40", "Pdcd1lg2", "Cd200", "Fas", "Il4ra", "Relb", "Xcr1", "Clec9a", "Cadm1", "Naaa", "Sirpa","Myd88", "Ticam1" , "Tlr3", "Tlr2","Aldh1a2","Il4i1", "Cd209a" ,"H2-DMb2" ,"Itgam","Cd80", "Cd86", "Cd83","Cd274", "Socs1", "Socs2", "Myo1g", "Cxcl16", "Adam8", "Icam1",  "Marcks", "Marcksl1","Tlr7", "Tlr6", "Tlr5","Tlr4","Tlr11")
+
+
+
+
+for (i in 1:length(gene_list)) {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap"))
+}
+
+```
+
+
+
+
+Second list of feature plots
+```{r}
+# Not found Cxcl12
+gene_list <- c("C1qb","C1qc","C1qa","Cebpb","C3ar1","Fcer1g","Clec4n","Lilrb4a","F10","Lilr4b","Cebpa","Ly6c1","Il12b","Ccl5","Ccl3","Tnf","Cd2","Batf3","Tcf4","Mx1","Oasl1","Nr4a1")
+
+
+
+
+for (i in 1:length(gene_list)) 
+  {
+  print(FeaturePlot(object = norm.data2, features = gene_list[i],reduction = "umap"))
+}
+
+```
+
+
+
+
+
+
+
+# extract markers for the clusters, and show some of them:
+```{r extract markers for the clusters norm.data2}
+for(i in 0:9) {
+assign(paste("cluster", i,".markers", sep = ""), FindMarkers(norm.data2, ident.1 = i, logfc.threshold = 1, test.use = "bimod", only.pos = TRUE))
+  print(paste("cluster", i,".markers", sep = ""))
+  print(head(get(paste("cluster", i,".markers", sep = "")),n=20))
+  write.table(get(paste("cluster", i,".markers", sep = "")),paste("cluster", i,".markers_merad_sc_data_wo_conta.txt", sep = ""),row.names = TRUE)
+  }
+```
+# Part 3: removed cDC2 based on the cMap analysis (where C0, C4, C7 and C9 were clearly cDC1, and some of C3 were cDC1 (selected the C3_cDC1 based on their high score in cDC1_vs_cDC2 signature 
+# Removing contaminants again to extract cDC1 cells
+```{r}
+contaminants_cDC <- rownames(tSNE_UMAP_coordinates_ok[which(tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C1" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C2" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C5" | tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C6"| tSNE_UMAP_coordinates_ok$clusters_res0.3 == "C8"),])
+length(contaminants_cDC)
+
+
+cells_wo_conta <- setdiff(rownames(metadata4), contaminants_cDC)
+metadata5 <- metadata4[rownames(metadata4) %in% cells_wo_conta, , drop=F]
+
+dim(metadata4)
+edited_clusters <- read.table("edited_clusters_res0.3_merad_sc_data_wo_conta.csv", sep="\t", header=T, row=1)
+
+clusters_edited_row_ids <- rownames(edited_clusters[which(edited_clusters$x == "C3" | edited_clusters$x == "C3_cDC2" ),])
+length(clusters_edited_row_ids)
+
+dim(metadata5)
+cells_wo_conta <- setdiff(rownames(metadata5), clusters_edited_row_ids)
+metadata6 <- metadata5[rownames(metadata5) %in% cells_wo_conta, , drop=F]
+
+
+dim(metadata6)
+write.table(metadata6, "metadata6_merad_sc_data_only_cDC1.txt", sep="\t", quote=F)
+
+
+
+```
+
+
+Removing files from last analysis
+
+```{r}
+y5 <- as.data.frame(t(y4))
+y6 = y5[rownames(y5) %in% rownames(metadata6), ,drop=F]
+y7 <- as.data.frame(t(y6))
+
+rm(y4, y5,y6, metadata4, norm.data2, plot1, plot2, tSNE_coordinates, UMAP_coordinates, tSNE_UMAP_coordinates_ok)
+```
+
+
+# Creating seurat object
+```{r}
+y_seurat3 <- CreateSeuratObject(y7, min.cells = 7, min.features = 600, project = "Merad_sc_data")
+dim(y_seurat3)
+
+```
+
+
+# Subsetting seurat object
+```{r}
+
+y_seurat3 <- subset(y_seurat3, subset = nFeature_RNA > 400 & nFeature_RNA < 10000)
+dim(y_seurat3)
+
+
+VlnPlot(object = y_seurat3, features = c("nCount_RNA", "nFeature_RNA"))
+
+
+hist(y_seurat3@meta.data$nCount_RNA)
+hist(y_seurat3@meta.data$nFeature_RNA)
+```
+
+Extracting metadata information
+```{r}
+
+metadata7 = metadata6[rownames(metadata6) %in% colnames(y_seurat3), , drop=F]
+dim(metadata7)
+write.table(metadata7, "metadata7_merad_sc_data_only_cDC1.txt", sep="\t", quote=F)
+```
+
+
+Plotting reads according to type 
+```{r}
+
+df_counts <- as.data.frame(y_seurat3@meta.data$nCount_RNA)
+df_counts$APC.IH <- metadata7$APC.IH
+df_counts$CD11b.IH <- metadata7$CD11b.IH
+df_counts$CD11c.IHM <- metadata7$CD11c.IHM
+df_counts$I.A.I.E.IHM <- metadata7$I.A.I.E.IHM
+df_counts$PE.IH <- metadata7$PE.IH
+df_counts$type <- metadata7$type
+df_counts$id <- rownames(metadata7) # these are cells (id)
+
+
+
+
+# histogram number of reads, according to type
+ggplot(df_counts, aes(x=id, y=y_seurat3@meta.data$nCount_RNA, fill=as.factor(metadata7$type))) + geom_col(stat="identity") + theme(axis.text.x = element_blank())
+```
+
+
+
+
+
+
+
+Normalizing the data
+```{r}
+norm.data3 <- NormalizeData(object = y_seurat3, normalization.method = "LogNormalize", scale.factor = 1e6)
+
+write.table(norm.data3@assays$RNA@data, "log_norm_filtered_data_merad_sc_data_only_cDC1.txt", sep="\t", quote=F)
+```
+
+
+
+
+# Finding variable features
+```{r}
+norm.data3 <- FindVariableFeatures(object=norm.data3, selection.method = "vst", mean.function = ExpMean, dispersion.function = LogVMR, num.bin = 20, binning.method = "equal_width", dispersion.cutoff=c(1, Inf), mean.cutoff=c(3, 12), nfeatures = 1000, verbose = TRUE)
+
+```
+
+# Creating gene expression table
+```{r}
+# Reading normalized expression values from seurat object
+norm_exp_val <- as.data.frame(t(norm.data3@assays$RNA@data))
+dim(norm_exp_val)
+
+# Attaching columns of clusters calculated from clustering
+clusters_res0.2 <- read.table("clusters_res0.2_merad_data_w_cDC1.txt", sep="\t", header=T, row=1)
+norm_exp_val_w_clust <- cbind(norm_exp_val, clusters_res0.2)
+dim(norm_exp_val_w_clust)
+
+
+# Arranging the dataframe based on the clusters column
+norm_exp_val_ordered <- norm_exp_val_w_clust[with(norm_exp_val_w_clust, order(x)),]
+dim(norm_exp_val_ordered)
+
+# Taking transpose of the dataframe
+norm_exp_merad_wo_conta <- as.data.frame(t(norm_exp_val_ordered))
+dim(norm_exp_merad_wo_conta)
+
+# Writing the table
+write.table(norm_exp_merad_wo_conta,"norm_exp_merad_wo_conta.txt", sep="\t", quote=F)
+
+# Making dataframe of cells
+cell_names <- (rownames(norm_exp_val_ordered))
+ordered_clusters <- norm_exp_val_ordered[,"x"]
+cell_ordered_by_clusters_df <- data.frame(cell_names,ordered_clusters)
+write.table(cell_ordered_by_clusters_df,"cells_ordered_merad_data_wo_conta.txt", sep="\t", quote=F)
+```
+
+Identify the 40 most highly variable genes
+plot1: variable features with and without labels
+In plot2 we label the plot1 with top40 variable genes we have detected above
+
+```{r}
+
+top40 <- head(VariableFeatures(norm.data3), 40)
+
+
+plot1 <- VariableFeaturePlot(norm.data3)
+
+
+plot2 <- LabelPoints(plot = plot1, points = top40, repel = TRUE)
+
+plot2
+
+all.genes <- rownames(norm.data3)
+norm.data3 <- ScaleData(norm.data3, features = all.genes)
+```
+
+
+
+# Perform linear dimensional reduction (PCA and ICA)
+```{r}
+norm.data3 <- RunPCA(norm.data3, npcs = 30, features = VariableFeatures(object = norm.data3))
+norm.data3 <- RunICA(norm.data3, nics = 30, features = VariableFeatures(object = norm.data3))
+```
+
+
+
+# Examine and visualize PCA results a few different ways
+```{r}
+print(norm.data3[["pca"]], dims = 1:5, nfeatures = 15)
+print(norm.data3[["ica"]], dims = 1:5, nfeatures = 15)
+
+VizDimLoadings(norm.data3, dims = 1:2, reduction = "pca")
+VizDimLoadings(norm.data3, dims = 1:2, reduction = "ica")
+
+# Plot showing Principle componenet 1 (PC1) and Principle componenet 2 (PC2)
+DimPlot(norm.data3, dims=c(1, 2), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 3 (PC3) and Principle componenet 4 (PC4)
+DimPlot(norm.data3, dims=c(3, 4), reduction = "pca", pt.size=2)
+# Plot showing Principle componenet 5 (PC5) and Principle componenet 6 (PC6)
+DimPlot(norm.data3, dims=c(5, 6), reduction = "pca", pt.size=2)
+
+pca_coordinates <- norm.data3@reductions$pca@cell.embeddings
+#write.table(pca_coordinates, "PCA_coordinates.txt", sep="\t", quote=F)
+ica_coordinates <- norm.data3@reductions$ica@cell.embeddings
+#write.table(ica_coordinates, "ICA_coordinates.txt", sep="\t", quote=F)
+```
+
+Heatmap: 
+```{r}
+DimHeatmap(norm.data3, dims = 1, cells = 1418, nfeatures = 20, balanced = TRUE)
+DimHeatmap(norm.data3, dims = 2, cells = 1418, balanced = TRUE)
+DimHeatmap(norm.data3, dims = 1:9, cells = 1418, balanced = TRUE)
+```
+
+
+Get cell and feature names, and total numbers
+```{r}
+head(colnames(x = norm.data3))
+head(Cells(norm.data3))
+head(rownames(x = norm.data3))
+ncol(x = norm.data3)
+nrow(x = norm.data3)
+```
+
+
+# Determine the ‘dimensionality’ of the dataset
+From the plot shown below it is clear that first seven principle components are responsible for most of the variability
+```{r}
+
+norm.data3 <- JackStraw(norm.data3, num.replicate = 100)
+norm.data3 <- ScoreJackStraw(norm.data3, dims = 1:20)
+JackStrawPlot(norm.data3, dims = 1:15)
+ElbowPlot(norm.data3)
+
+
+```
+
+
+
+
+# Clustering the cells
+We tried several resolutions for calculating clusters but found 0.2 to be best based on the number of clusters because we needed seven clusters to perform cmap on Ghita's data
+```{r}
+norm.data3 <- FindNeighbors(norm.data3, reduction = "pca", dims = 1:7, k.param=9, compute.SNN=TRUE, force.recalc=TRUE)
+
+
+norm.data3 <- RunUMAP(norm.data3, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data3, reduction = "umap", pt.size=1)
+
+
+norm.data3 <- FindClusters(norm.data3, resolution = 0.2, algorithm=1, random.seed=0)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(norm.data3), 5)
+
+
+clusters_res0.2 <- norm.data3$RNA_snn_res.0.2
+write.table(clusters_res0.2, "clusters_res0.2_merad_sc_data_only_cDC1.txt", sep="\t", quote=F)
+norm.data3 <- RunUMAP(norm.data3, umap.method="uwot", dims = 1:7, seed.use=10,  n.components=2, n.neighbors = 4L, spread=1.5, min.dist=0.8)
+DimPlot(norm.data3, reduction = "umap", pt.size=1)
+```
+
+
+
+
+
+
+
+
+
+
+ 
+ 
