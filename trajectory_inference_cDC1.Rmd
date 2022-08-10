@@ -1,7 +1,7 @@
 report_for_Monocle3_on_scRNAseq_Ghita_wo_M1_wo_conta_dataset
 Ammar Sabir Cheema
 28 may 2020
-# This R script is meant to analyze scRNAseq data using the Monocle3 R package. # It is inspired by the tutorial found here: # https://cole-trapnell-lab.github.io/monocle3/
+
 
 
 # Loading libraries
