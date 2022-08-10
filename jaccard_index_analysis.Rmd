@@ -80,9 +80,10 @@ names( jaccard_index_df) = names(dataset_ghita)
 row.names( jaccard_index_df) = names(dataset_merad)
 names( intersection_df) = names(dataset_ghita)
 row.names( intersection_df) = names(dataset_merad)
-
+```
 
 # Display the data.frame of jaccard indexes as a heatmap
+```{r}
 break_list = seq(0, 0.4, by = 0.05)
 pheatmap::pheatmap(
   jaccard_index_df,
