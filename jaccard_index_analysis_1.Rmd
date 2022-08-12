@@ -1,0 +1,122 @@
+---
+title: "Jaccard_Analysis"
+author: "Ammar Sabir Cheema"
+date: "14/05/2020"
+chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading libraries
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+
+
+aa <- list.files(path = "/home/ammar/Analysis/ghita_analysis/mine/vio_plots/plots/clusters/", pattern = "conta", all.files = TRUE,
+            full.names = FALSE, recursive = FALSE,
+            ignore.case = FALSE, include.dirs = FALSE)
+ print(aa)
+
+
+
+ dataset_GG <- lapply(aa, read.table)
+ names(dataset_GG) <- list.files(path="/home/ammar/Analysis/ghita_analysis/mine/vio_plots/plots/clusters/", pattern = "conta", full.names=FALSE)
+
+ names(dataset_GG) <- sub("cluster", "C", names(dataset_GG))
+ names(dataset_GG) <- sub("markers_wo_M1_wo_conta.txt", "GG", names(dataset_GG))
+ names(dataset_GG)
+
+
+
+# I only keep the gene names. 
+ for (i in 1:length(dataset_GG)) {
+   dataset_GG[[i]] <- rownames(dataset_GG[[i]])
+}
+ 
+ bb <- list.files(path = "/home/ammar/Analysis/ghita_analysis/mine/vio_plots/plots/clusters/", pattern = "only_Irf1_FF", all.files = TRUE,
+            full.names = FALSE, recursive = FALSE,
+            ignore.case = FALSE, include.dirs = FALSE)
+ 
+ 
+ print(bb)
+ dataset_GF <- lapply(bb, read.table)
+ names(dataset_GF) <- list.files(path="/home/ammar/Analysis/ghita_analysis/mine/vio_plots/plots/clusters/", pattern = "only_Irf1", full.names=FALSE)
+ names(dataset_GF) <- sub("cluster", "C", names(dataset_GF))
+ names(dataset_GF) <- sub("markers_only_Irf1_FF_only_Ikbkb_FF_res_1.3.txt", "GF", names(dataset_GF))
+ names(dataset_GF)
+
+
+
+ # I only keep the gene names. 
+for (i in 1:length(dataset_GF)) {
+  dataset_GF[[i]] <- rownames(dataset_GF[[i]])
+}
+
+
+# Compute the size of intersection between list of genes of pairs of different clusters of the tissues
+# and compute the Jaccard index for each pair of clusters. Store both information in two different dataframes
+jaccard_index_df = data.frame()
+intersection_df = data.frame()
+for(i in 1:length(dataset_GG)) {
+  jaccard_index_set = vector()
+  details_set = vector()
+  for(j in 1:length(dataset_GF)) {
+    jaccard_index = length( intersect( dataset_GG[[i]], dataset_GF[[j]])) / length( unique( c( dataset_GG[[i]], dataset_GF[[j]])))
+    jaccard_index_set = append( jaccard_index_set, jaccard_index)
+    details_set = append( details_set, length( intersect( dataset_GG[[i]], dataset_GF[[j]])))
+  } 
+  jaccard_index_df = rbind( jaccard_index_df, jaccard_index_set)
+  intersection_df = rbind( intersection_df, details_set)
+}
+names( jaccard_index_df) = names(dataset_GF)
+row.names( jaccard_index_df) = names(dataset_GG)
+names( intersection_df) = names(dataset_GF)
+row.names( intersection_df) = names(dataset_GG)
+
+
+# Display the data.frame of jaccard indexes as a heatmap
+break_list = seq(0, 0.4, by = 0.05)
+#pheatmap::pheatmap(
+#  jaccard_index_df,
+#  color = colorRampPalette(brewer.pal(n = 9, name = "Blues"))(length( break_list)),
+#  cellwidth =40, cellheight =30,
+#  fontsize = 12,
+#  show_rownames = T, show_colnames = T,
+#  angle_col = 45,
+#  breaks = break_list,
+#  display_numbers = matrix( paste0( as.matrix( intersection_df), " (", 100*signif( as.matrix( jaccard_index_df), 2), "%)"), ncol = length(dataset_GF)),
+#  cluster_rows = FALSE, cluster_cols = FALSE,
+#  treeheight_row = 0, treeheight_col=0
+#)
+
+
+# pheatmap(
+#   jaccard_index_df,
+#   cellwidth =30, cellheight =20,
+#   color = colorRampPalette(rev(brewer.pal(n = 7, name =
+#   "RdBu")))(length( break_list)),
+#   fontsize = 12,
+#   show_rownames = T, show_colnames = T,
+#   angle_col = 45,
+#   breaks = break_list,
+#   cluster_rows = FALSE, cluster_cols = FALSE,
+#   treeheight_row = 0, treeheight_col=0,legend=T,cutree_rows = 4
+# )
+
+
+pheatmap::pheatmap(
+  jaccard_index_df,
+  color = colorRampPalette(brewer.pal(n = 9, name = "Blues"))(length( break_list)),
+  cellwidth =40, cellheight =30,
+  fontsize = 12,
+  show_rownames = T, show_colnames = T,
+  #angle_col = 45,
+  breaks = break_list,
+  #display_numbers = matrix(100*signif( as.matrix( jaccard_index_df), 2), ncol = length(dataset_GF)),
+  cluster_rows = FALSE, cluster_cols = FALSE,
+  treeheight_row = 0, treeheight_col=0
+)
+```
