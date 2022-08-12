@@ -30,10 +30,12 @@ single cell RNA-seq datasets used in the study can be accessed online using the 
 
 **seurat_analysis_only_cDC1_113_cells.Rmd:** used to generate Figures 2A, 2C, 2D and supplementary Figures S2A, S2B, S2C and S7F  
 
-**analyzing_data_with_different_conds.Rmd:** used to generate results shown in Figures 6A, 6D and supplementary Figures S7B, S7C, S7E, S7F, S7G, S7N  
+**analyzing_data_with_different_conds.Rmd:** used to generate results shown in Figures 6A, 6D and supplementary Figures S7B, S7C, S7E, S7F, S7G, S7N 
 
 **re_analyzing_cDC1_data_from_Maier_et_al.Rmd:** used to generate suplementary Figures S8A, S8C, S8D, S8E 
 
 **trajectory_inference_cDC1.Rmd:** used to generate Figure 6E, 6F and 6G
+
+**jaccard_index_analysis_1Rmd:** used to generate supplementary Figure S7A
 
 **jaccard_index_analysis_2.Rmd:** used to generate supplementary Figure S8B
