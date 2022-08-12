@@ -28,3 +28,15 @@ single cell RNA-seq datasets used in the study can be accessed online using the 
 
 ## Code Description:
 
+Dockerfile: contains the Dockerfile for generating the Docker image for performing the analysis
+
+analyzing_data_with_different_conds.Rmd:
+
+jaccard_index_analysis.Rmd: 
+
+re_analyzing_cDC1_data_from_Maier_et_al.Rmd:
+
+seurat_analysis_only_cDC1_113_cells.Rmd:
+
+trajectory_inference_cDC1.Rmd:
+
